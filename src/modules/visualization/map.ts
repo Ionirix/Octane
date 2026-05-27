@@ -5,6 +5,7 @@ type MapController = {
   setData: (nodes: VisualizationNode[], alerts: VisualizationAlert[], focusedNodeId?: string) => void
   setAltitude: (altitude: number) => void
   setAudioReactive: (enabled: boolean, level?: number, bands?: AudioReactiveBands) => void
+  setWireframesVisible: (visible: boolean) => void
   destroy: () => void
 }
 
@@ -318,6 +319,25 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
   let audioReactiveLevel = 0
   let audioReactiveBands: AudioReactiveBands = { bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 }
   let motionStep = 0
+  let wireframesVisible = true
+
+  const toggleLayer = (layer: L.LayerGroup, visible: boolean) => {
+    if (visible && !map.hasLayer(layer)) {
+      layer.addTo(map)
+      return
+    }
+    if (!visible && map.hasLayer(layer)) {
+      map.removeLayer(layer)
+    }
+  }
+
+  const applyWireframeVisibility = (visible: boolean) => {
+    wireframesVisible = visible
+    toggleLayer(gridLayer, visible)
+    toggleLayer(meshLayer, visible)
+    toggleLayer(reactiveMeshLayer, visible)
+    toggleLayer(connectionLayer, visible)
+  }
 
   triangulatedMeshSegments(NETWORK_POINTS).forEach(([start, end], index) => {
     const meshLine = L.polyline([start, end], {
@@ -859,6 +879,9 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       } else if (!enabled) {
         audioReactiveBands = { bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 }
       }
+    },
+    setWireframesVisible: (visible: boolean) => {
+      applyWireframeVisibility(visible)
     },
     destroy: () => {
       window.clearInterval(reactiveTimer)

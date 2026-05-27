@@ -19,6 +19,7 @@ export const router = createBrowserRouter([
     element: <AppShell />,
     children: [
       { path: 'surveillance', element: L(() => import('@screens/Surveillance')) },
+      { path: 'weather',      element: L(() => import('@screens/WeatherIntelligence')) },
       { path: 'orchestration', element: L(() => import('@screens/Orchestration')) },
       { index: true,          element: L(() => import('@screens/v5/V5CommandCenter')) },
       { path: 'v5/src',       element: L(() => import('@screens/v5/V5StellarReach')) },

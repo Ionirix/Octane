@@ -5,7 +5,7 @@ import clsx from 'clsx'
 import {
   LayoutDashboard, Activity, Radio, Sliders, Film, Mic2, Cpu,
   Image, MessageSquare, Zap, Database, GitBranch, BarChart2,
-  Orbit, Cable, Network, Shield, Waypoints, Scale, Workflow, Radar,
+  Orbit, Cable, Network, Shield, Waypoints, Scale, Workflow, Radar, CloudRain,
 } from 'lucide-react'
 
 const NAV_GROUPS = [
@@ -14,6 +14,7 @@ const NAV_GROUPS = [
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Command Center' },
       { to: '/surveillance', icon: Radar, label: 'Surveillance' },
+      { to: '/weather', icon: CloudRain, label: 'Weather Intel' },
       { to: '/v5/src', icon: Orbit, label: 'Stellar Reach (SRC)' },
       { to: '/v5/cbe', icon: Cable, label: 'Civilization Bridge (CBE)' },
       { to: '/v5/elx', icon: Network, label: 'Existence Lattice (ELX)' },

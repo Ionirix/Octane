@@ -209,6 +209,7 @@ export default function Surveillance() {
   const [audioStatus, setAudioStatus] = useState('AUDIO OFF')
   const [audioLevel, setAudioLevel] = useState(0)
   const [audioBands, setAudioBands] = useState<AudioBands>({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
+  const [wireframesVisible, setWireframesVisible] = useState(true)
   const alertsRef = useRef<HTMLDivElement | null>(null)
   const reloadDataRef = useRef<(() => Promise<void>) | null>(null)
   const audioBandsRef = useRef<AudioBands>({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
@@ -462,6 +463,13 @@ export default function Surveillance() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => setWireframesVisible((current) => !current)}
+                  className="inline-flex items-center gap-2 rounded border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-[var(--muted)] hover:text-[var(--text)]"
+                >
+                  {wireframesVisible ? 'Hide Wireframes' : 'Show Wireframes'}
+                </button>
+                <button
+                  type="button"
                   onClick={() => void reloadDataRef.current?.()}
                   className="inline-flex items-center gap-2 rounded border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-[var(--muted)] hover:text-[var(--text)]"
                 >
@@ -505,6 +513,7 @@ export default function Surveillance() {
                 focusedNodeId={focusedNode.id}
                 nodes={nodes}
                 alerts={liveAlerts}
+                wireframesVisible={wireframesVisible}
                 audioReactive={audioReactiveState}
               />
             </div>

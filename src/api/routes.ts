@@ -14,6 +14,7 @@ import { flowHandler }       from './handlers/flows.js';
 import { governanceHandler } from './handlers/governance.js';
 import { metricsHandler }    from './handlers/metrics.js';
 import { surveillanceRouter } from './handlers/surveillance.js';
+import { weatherRouter } from './handlers/weather.js';
 
 export function createRouter(): Hono<{ Bindings: Env }> {
   const app = new Hono<{ Bindings: Env }>();
@@ -90,6 +91,7 @@ export function createRouter(): Hono<{ Bindings: Env }> {
 
   // ── v6 Surveillance ───────────────────────────────────────────
   app.route('/v6/surveillance', surveillanceRouter);
+  app.route('/v6/weather', weatherRouter);
 
   return app;
 }

@@ -13,6 +13,7 @@ type SurveillanceMapProps = {
   focusedNodeId: string
   nodes: VisualizationNode[]
   alerts: VisualizationAlert[]
+  wireframesVisible?: boolean
   audioReactive?: {
     enabled: boolean
     level: number
@@ -27,7 +28,7 @@ type SurveillanceMapProps = {
   edgeToEdge?: boolean
 }
 
-export function SurveillanceMap({ altitude, focusedNodeId, nodes, alerts, audioReactive, edgeToEdge }: SurveillanceMapProps) {
+export function SurveillanceMap({ altitude, focusedNodeId, nodes, alerts, wireframesVisible = true, audioReactive, edgeToEdge }: SurveillanceMapProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const controllerRef = useRef<MapController | null>(null)
@@ -58,6 +59,7 @@ export function SurveillanceMap({ altitude, focusedNodeId, nodes, alerts, audioR
       controllerRef.current = controller
       controller.setAltitude(altitude)
       controller.setData(nodes, alerts, focusedNodeId)
+      controller.setWireframesVisible(wireframesVisible)
       controller.setAudioReactive(
         audioReactive?.enabled ?? false,
         audioReactive?.level ?? 0,
@@ -89,6 +91,10 @@ export function SurveillanceMap({ altitude, focusedNodeId, nodes, alerts, audioR
       audioReactive?.bands,
     )
   }, [audioReactive])
+
+  useEffect(() => {
+    controllerRef.current?.setWireframesVisible(wireframesVisible)
+  }, [wireframesVisible])
 
   const toggleFullscreen = async () => {
     const surface = surfaceRef.current
