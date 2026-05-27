@@ -390,7 +390,7 @@
 
 .surveillance-target-lock--exit .surveillance-target-label,
 .surveillance-target-lock--exit .surveillance-target-link {
-  animation: surveillance-target-label-exit 700ms ease-in forwards;
+  animation: surveillance-target-label-exit 420ms ease-in forwards;
 }
 
 .surveillance-target-lock--resolved .surveillance-target-reticle {
@@ -401,6 +401,7 @@
   border-color: rgba(255, 255, 255, 0.85);
   color: #f3ffff;
   box-shadow: 0 0 18px rgba(255, 255, 255, 0.36);
+  animation: surveillance-target-label-exit 220ms ease-out forwards;
 }
 
 .surveillance-target-lock--resolved .surveillance-target-threat {

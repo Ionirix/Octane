@@ -50,6 +50,17 @@ type SurveillanceAlert = {
   resolved: boolean
 }
 
+type PeaceMarker = {
+  marker: string
+  createdAt: number
+  source: string
+  disturbanceType: string
+  modality: string
+  converged: boolean
+  triggerAlertId?: string
+  summary: string
+}
+
 type ApiPayload<T> = { success?: boolean; data?: T }
 
 type AudioBands = {
@@ -119,39 +130,6 @@ const FALLBACK_NODES: SurveillanceNode[] = [
   { id: 'uk-south-1', name: 'UK-SOUTH-1', country: 'United Kingdom', region: 'London, UK', lat: 51.5, lng: -0.12, status: 'NOMINAL', latencyMs: 16, loadPercent: 73, requestsPerMin: 19740, connections: ['eu-west-1', 'eu-central'] },
 ]
 
-const FALLBACK_ALERTS: SurveillanceAlert[] = [
-  {
-    id: 'traffic-london-1',
-    type: 'TRAFFIC',
-    severity: 'WARNING',
-    title: 'London arterial slowdown',
-    description: 'Major flow reduced near the Thames corridor and city center transit lines are re-routing.',
-    serverId: 'uk-south-1',
-    timestamp: Date.now() - 1000 * 60 * 4,
-    resolved: false,
-  },
-  {
-    id: 'weather-tokyo-1',
-    type: 'WEATHER',
-    severity: 'CRITICAL',
-    title: 'Tokyo weather closure',
-    description: 'Heavy rain and rail delay advisories are affecting the downtown street grid.',
-    serverId: 'ap-east-1',
-    timestamp: Date.now() - 1000 * 60 * 7,
-    resolved: false,
-  },
-  {
-    id: 'closure-sydney-1',
-    type: 'CLOSURE',
-    severity: 'INFO',
-    title: 'Sydney harbor lane closure',
-    description: 'Temporary bridge lane closure for maintenance and bus detour sequencing.',
-    serverId: 'ap-aus-1',
-    timestamp: Date.now() - 1000 * 60 * 11,
-    resolved: false,
-  },
-]
-
 function formatAgo(timestamp: number): string {
   const minutes = Math.max(1, Math.round((Date.now() - timestamp) / 60000))
   return minutes === 1 ? '1 min ago' : `${minutes} mins ago`
@@ -197,6 +175,7 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
 }
 
 export default function Surveillance() {
+  const feedSessionStartRef = useRef<number>(Date.now())
   const [snapshot, setSnapshot] = useState<SurveillanceSnapshot | null>(null)
   const [nodes, setNodes] = useState<SurveillanceNode[]>(FALLBACK_NODES)
   const [alerts, setAlerts] = useState<SurveillanceAlert[]>([])
@@ -210,6 +189,7 @@ export default function Surveillance() {
   const [audioLevel, setAudioLevel] = useState(0)
   const [audioBands, setAudioBands] = useState<AudioBands>({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
   const [wireframesVisible, setWireframesVisible] = useState(true)
+  const [peaceMarkers, setPeaceMarkers] = useState<PeaceMarker[]>([])
   const alertsRef = useRef<HTMLDivElement | null>(null)
   const reloadDataRef = useRef<(() => Promise<void>) | null>(null)
   const audioBandsRef = useRef<AudioBands>({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
@@ -351,11 +331,22 @@ export default function Surveillance() {
         const snapshotPayload = await snapshotResponse.json() as ApiPayload<SurveillanceSnapshot>
         const nodesPayload = await nodesResponse.json() as ApiPayload<SurveillanceNode[]>
         const alertsPayload = await alertsResponse.json() as ApiPayload<SurveillanceAlert[]>
+        const freshAlerts = (alertsPayload.data ?? []).filter((alert) => alert.timestamp >= feedSessionStartRef.current)
+
+        let nextMarkers: PeaceMarker[] = []
+        try {
+          const markersResponse = await fetch('/api/v6/self-healing/markers?limit=8')
+          const markersPayload = await markersResponse.json() as ApiPayload<PeaceMarker[]>
+          nextMarkers = markersPayload.data ?? []
+        } catch {
+          nextMarkers = []
+        }
 
         if (!cancelled) {
           setSnapshot(snapshotPayload.data ?? null)
           setNodes(nodesPayload.data?.length ? nodesPayload.data : FALLBACK_NODES)
-          setAlerts(alertsPayload.data?.length ? alertsPayload.data : FALLBACK_ALERTS)
+          setAlerts(freshAlerts)
+          setPeaceMarkers(nextMarkers)
           setError(null)
           setLastSync(Date.now())
         }
@@ -364,6 +355,7 @@ export default function Surveillance() {
           setError(err instanceof Error ? err.message : String(err))
           setNodes(FALLBACK_NODES)
           setAlerts([])
+          setPeaceMarkers([])
           setLastSync(Date.now())
         }
       } finally {
@@ -580,6 +572,33 @@ export default function Surveillance() {
               {liveAlerts.length === 0 && (
                 <div className="rounded border border-[var(--border)] bg-[var(--bg)] p-3 text-sm text-[var(--muted)]">
                   No active alerts. The surveillance fabric is stable and polling fresh data.
+                </div>
+              )}
+            </div>
+          </Panel>
+
+          <Panel title="Peaceful Resolve Feed" subtitle="self-healing markers from runtime stability protocol">
+            <div className="flex max-h-[250px] flex-col gap-2 overflow-y-auto pr-1 [mask-image:linear-gradient(to_bottom,transparent,black_10%,black_90%,transparent)]">
+              {peaceMarkers.slice(0, 6).map((marker) => (
+                <div
+                  key={marker.marker}
+                  className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-[var(--accent)]">{marker.modality.replaceAll('_', ' ')}</div>
+                    <StatusBadge status={marker.converged ? 'ok' : 'warn'} label={marker.converged ? 'CONVERGED' : 'IN PROGRESS'} />
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-[var(--text)]">{marker.disturbanceType.replaceAll('_', ' ')}</div>
+                  <div className="mt-1 text-[11px] leading-5 text-[var(--muted)]">{marker.summary}</div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[9px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                    <span className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1">Marker {marker.marker}</span>
+                    <span className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1">{formatRelative(marker.createdAt)}</span>
+                  </div>
+                </div>
+              ))}
+              {peaceMarkers.length === 0 && (
+                <div className="rounded border border-[var(--border)] bg-[var(--bg)] p-3 text-sm text-[var(--muted)]">
+                  No peace markers yet. Runtime self-healing will post here when alerts trigger restorative cycles.
                 </div>
               )}
             </div>

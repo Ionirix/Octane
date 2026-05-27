@@ -64,8 +64,8 @@ const TARGET_PHASE_MS = {
   entry: 620,
   acquire: 1_850,
   dwell: 8_000,
-  exit: 700,
-  resolved: 620,
+  exit: 420,
+  resolved: 220,
 } as const
 
 function nextPhase(current: TargetPhase): TargetPhase {
@@ -554,7 +554,7 @@ export function SurveillanceMap({ altitude, focusedNodeId, nodes, alerts, wirefr
               <div className="surveillance-target-label" style={{ left: `${labelX - target.x}px`, top: `${labelY - target.y}px` }}>
                 <div className="surveillance-target-title">{target.title.toUpperCase()}</div>
                 <div className="surveillance-target-meta">{target.phaseLabel} • {target.metric}</div>
-                <div className="surveillance-target-threat">{target.threatLabel}</div>
+                {target.phase !== 'resolved' ? <div className="surveillance-target-threat">{target.threatLabel}</div> : null}
                 <div className="surveillance-target-dwell">
                   {target.phase === 'dwell'
                     ? `DWELL ${target.dwellRemainingSeconds.toFixed(1)}s`
