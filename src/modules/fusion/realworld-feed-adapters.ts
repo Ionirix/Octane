@@ -20,6 +20,14 @@ type RawSurveillanceAlert = {
   description?: string
   timestamp?: number
   serverId?: string
+  lat?: number
+  lon?: number
+  lng?: number
+  location?: {
+    lat?: number
+    lon?: number
+    lng?: number
+  }
 }
 
 export type RealWorldSignal = {
@@ -46,6 +54,26 @@ function asObject(input: unknown): JsonObject | null {
 function asArray<T>(input: unknown): T[] {
   if (!Array.isArray(input)) return []
   return input as T[]
+}
+
+function finiteNumber(input: unknown): number | null {
+  if (typeof input !== 'number') return null
+  if (!Number.isFinite(input)) return null
+  return input
+}
+
+function resolveAlertCoordinates(alert: RawSurveillanceAlert): { lat: number; lon: number } | null {
+  const locationLat = finiteNumber(alert.location?.lat)
+  const locationLon = finiteNumber(alert.location?.lon)
+  const locationLng = finiteNumber(alert.location?.lng)
+  const topLevelLat = finiteNumber(alert.lat)
+  const topLevelLon = finiteNumber(alert.lon)
+  const topLevelLng = finiteNumber(alert.lng)
+
+  const lat = locationLat ?? topLevelLat
+  const lon = locationLon ?? locationLng ?? topLevelLon ?? topLevelLng
+  if (lat === null || lon === null) return null
+  return { lat, lon }
 }
 
 function mapAlertCategory(type: string): FusedEventCategory {
@@ -120,12 +148,15 @@ export async function fetchRealWorldSignals(baseUrl = '/api'): Promise<RealWorld
     const data = asArray<RawSurveillanceAlert>(rawData)
     data.forEach((alert) => {
       const observedAt = alert.timestamp ?? Date.now()
+      const coordinates = resolveAlertCoordinates(alert)
+      if (!coordinates) return
+      const categoryHint = `${alert.type} ${alert.title ?? ''} ${alert.description ?? ''}`
       realSignals.push({
         id: `rw-alert-${alert.id}`,
-        category: mapAlertCategory(alert.type),
+        category: mapAlertCategory(categoryHint),
         type: alert.type,
-        lat: 0,
-        lon: 0,
+        lat: coordinates.lat,
+        lon: coordinates.lon,
         severity: alert.severity,
         observedAt,
         region: alert.serverId ?? 'global',
@@ -134,6 +165,7 @@ export async function fetchRealWorldSignals(baseUrl = '/api'): Promise<RealWorld
         evidence: [
           evidence('surveillance:alerts', 'type', alert.type, observedAt, 0.75),
           evidence('surveillance:alerts', 'severity', alert.severity, observedAt, 0.81),
+          evidence('surveillance:alerts', 'coordinates', `${coordinates.lat.toFixed(4)},${coordinates.lon.toFixed(4)}`, observedAt, 0.92),
         ],
       })
     })
