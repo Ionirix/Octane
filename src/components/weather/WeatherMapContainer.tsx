@@ -134,7 +134,7 @@ function buildCloudPatch(
   seed: number,
   scaleDeg: number,
 ): Array<[number, number]> {
-  const points = 30
+  const points = CLOUD_PATCH_POINT_COUNT
   const strength = 0.96 + (intensity * 0.62)
   const lngScale = Math.max(0.35, Math.cos((center[0] * Math.PI) / 180))
 
@@ -163,6 +163,20 @@ function buildCloudMassCenters(
     projectPoint(center, driftDeg + 78, scaleDeg * 0.33),
     projectPoint(center, driftDeg - 88, scaleDeg * 0.29),
   ]
+}
+
+function downsampleVectorPoints(
+  points: Array<{ lat: number; lng: number; value: number; directionDeg?: number }>,
+  cap: number,
+): Array<{ lat: number; lng: number; value: number; directionDeg?: number }> {
+  if (points.length <= cap) return points
+  const stride = Math.max(1, Math.floor(points.length / cap))
+  const sampled: Array<{ lat: number; lng: number; value: number; directionDeg?: number }> = []
+  for (let index = 0; index < points.length; index += stride) {
+    sampled.push(points[index])
+    if (sampled.length >= cap) break
+  }
+  return sampled
 }
 
 function buildCloudRasterDataUrl(
@@ -288,7 +302,11 @@ function buildVectorPointsSignature(
 ): string {
   if (!points || points.length === 0) return 'none'
 
-  const sampleIndexes = [0, Math.floor(points.length / 2), points.length - 1]
+  const sampleCount = Math.min(16, points.length)
+  const sampleIndexes = Array.from({ length: sampleCount }).map((_, index) => {
+    if (sampleCount === 1) return 0
+    return Math.floor((index / (sampleCount - 1)) * (points.length - 1))
+  })
   const sample = sampleIndexes
     .map((index) => points[index])
     .filter((point): point is { lat: number; lng: number; value: number; directionDeg?: number } => Boolean(point))
@@ -299,6 +317,12 @@ function buildVectorPointsSignature(
 }
 
 type LeafletModule = typeof import('leaflet')
+
+const CLOUD_MASS_SIZE_MULTIPLIER = 4
+const CLOUD_PATCH_POINT_COUNT = 18
+const CLOUD_COVERAGE_POINT_CAP = 90
+const STORM_CLOUD_POINT_CAP = 120
+const HURRICANE_RAIN_POINT_CAP = 140
 
 type WeatherMapContainerProps = {
   mapView: WeatherMapView
@@ -373,6 +397,7 @@ export function WeatherMapContainer({
         attributionControl: true,
         minZoom: 2,
         maxZoom: 12,
+        preferCanvas: true,
         zoomAnimation: true,
         markerZoomAnimation: true,
         fadeAnimation: false,
@@ -965,9 +990,9 @@ export function WeatherMapContainer({
         && data.tileUrlTemplate
         && type !== 'cloudCoverage'
         && type !== 'stormCloudCoverage'
-        ? `tile|${type}|${data.time}|${data.tileUrlTemplate}`
+        ? `tile|${type}|${data.tileUrlTemplate}`
         : null
-      const vectorSignatureWithState = `vector|${type}|${data.time}|${vectorSignature}|z${mapView.zoom}|o${Math.round(envOpacity[type] * 100)}`
+      const vectorSignatureWithState = `vector|${type}|${vectorSignature}|z${mapView.zoom}`
       const signature = tileSignature ?? vectorSignatureWithState
 
       if (layerSignatures[type] === signature) {
@@ -997,7 +1022,18 @@ export function WeatherMapContainer({
         return
       }
 
-      data.vectorPoints.forEach((point, index) => {
+      const pointsToRender = (type === 'cloudCoverage' || type === 'stormCloudCoverage' || type === 'hurricaneRainRadar')
+        ? downsampleVectorPoints(
+            data.vectorPoints,
+            type === 'cloudCoverage'
+              ? CLOUD_COVERAGE_POINT_CAP
+              : type === 'stormCloudCoverage'
+                ? STORM_CLOUD_POINT_CAP
+                : HURRICANE_RAIN_POINT_CAP,
+          )
+        : data.vectorPoints
+
+      pointsToRender.forEach((point, index) => {
         const windColor = '#22c55e'
 
         if (type === 'wind' && typeof point.directionDeg === 'number') {
@@ -1108,11 +1144,14 @@ export function WeatherMapContainer({
             if (index % cloudStride !== 0) return
           }
 
-          const scale = mapView.zoom >= 9
+          const baseScale = mapView.zoom >= 9
             ? 0.18
             : mapView.zoom >= 7
               ? 0.29
               : 0.41
+          const cloudScale = (type === 'cloudCoverage' || type === 'stormCloudCoverage' || type === 'hurricaneRainRadar')
+            ? baseScale * CLOUD_MASS_SIZE_MULTIPLIER
+            : baseScale
           const patchIntensity = type === 'hurricaneRainRadar'
             ? Math.max(0, Math.min(1, point.value / 70))
             : Math.max(0.18, Math.min(0.86, point.value / 100))
@@ -1127,14 +1166,17 @@ export function WeatherMapContainer({
             ? point.directionDeg
             : ((index * 31) + mapView.zoom * 9) % 360
 
-          const massCenters = buildCloudMassCenters([point.lat, point.lng], driftHeading, scale)
+          const massCenters = buildCloudMassCenters([point.lat, point.lng], driftHeading, cloudScale)
+          const massCount = type === 'cloudCoverage'
+            ? (mapView.zoom >= 8 ? 3 : 2)
+            : (mapView.zoom >= 8 ? 4 : 3)
 
-          massCenters.forEach((massCenter, massIndex) => {
+          massCenters.slice(0, massCount).forEach((massCenter, massIndex) => {
             const outerPatch = buildCloudPatch(
               massCenter,
               patchIntensity,
               index + (point.value * 0.04) + (massIndex * 1.73),
-              scale * (massIndex === 0 ? 1 : 0.6),
+              cloudScale * (massIndex === 0 ? 1 : 0.6),
             )
 
             const outer = leaflet.polygon(outerPatch, {
@@ -1165,13 +1207,13 @@ export function WeatherMapContainer({
             }
           })
 
-          if (type !== 'cloudCoverage') {
+          if (type !== 'cloudCoverage' && mapView.zoom >= 7) {
             const innerColor = type === 'stormCloudCoverage' ? '#dbeafe' : toBlueHex(point.value + 20, 170, 250)
             const innerPatch = buildCloudPatch(
               [point.lat, point.lng],
               patchIntensity,
               index + (point.value * 0.11),
-              scale * 0.62,
+              cloudScale * 0.62,
             )
 
             leaflet.polygon(innerPatch, {

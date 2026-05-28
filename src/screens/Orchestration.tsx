@@ -1324,10 +1324,23 @@ export default function Orchestration() {
 
       if (navigator.mediaDevices?.getDisplayMedia) {
         try {
-          stream = await navigator.mediaDevices.getDisplayMedia({
+          const displayMediaConstraints: MediaStreamConstraints & {
+            preferCurrentTab?: boolean
+            selfBrowserSurface?: 'include' | 'exclude'
+            surfaceSwitching?: 'include' | 'exclude'
+            systemAudio?: 'include' | 'exclude'
+            monitorTypeSurfaces?: 'include' | 'exclude'
+          } = {
             video: true,
-            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-          })
+            audio: true,
+            preferCurrentTab: true,
+            selfBrowserSurface: 'include',
+            surfaceSwitching: 'include',
+            systemAudio: 'include',
+            monitorTypeSurfaces: 'include',
+          }
+
+          stream = await navigator.mediaDevices.getDisplayMedia(displayMediaConstraints)
           if (!stream.getAudioTracks().length) {
             stream.getTracks().forEach(track => track.stop())
             stream = null

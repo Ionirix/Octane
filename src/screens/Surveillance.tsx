@@ -19,6 +19,19 @@ type AudioBands = {
   beat: number
 }
 
+type AudioInputMode = 'auto' | 'system' | 'microphone'
+
+type SharedAudioFrame = {
+  sourceId: string
+  timestamp: number
+  status: string
+  level: number
+  bands: AudioBands
+}
+
+const AUDIO_SHARE_CHANNEL = 'octane-audio-reactive-v1'
+const REMOTE_AUDIO_TIMEOUT_MS = 2_500
+
 type GlobalEventCategory = 'traffic' | 'weather' | 'wildfire' | 'police' | 'service'
 
 type SurveillanceAlertFeed = {
@@ -153,6 +166,7 @@ export default function Surveillance() {
   const [telemetrySamples, setTelemetrySamples] = useState<TelemetrySample[]>([])
   const [wireframesVisible, setWireframesVisible] = useState(true)
   const [audioStatus, setAudioStatus] = useState('AUDIO OFF')
+  const [audioInputMode, setAudioInputMode] = useState<AudioInputMode>('auto')
   const [audioLevel, setAudioLevel] = useState(0)
   const [audioBands, setAudioBands] = useState<AudioBands>({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
   const [fusionAutomationState, setFusionAutomationState] = useState('nominal')
@@ -160,6 +174,10 @@ export default function Surveillance() {
   const activeAlertIndexRef = useRef<Map<string, SurveillanceAlertFeed>>(new Map())
   const audioBandsRef = useRef<AudioBands>({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
   const audioRef = useRef<{ context?: AudioContext; analyser?: AnalyserNode; source?: MediaStreamAudioSourceNode; stream?: MediaStream; raf?: number }>({})
+  const audioShareRef = useRef<BroadcastChannel | null>(null)
+  const lastRemoteAudioAtRef = useRef(0)
+  const audioSourceIdRef = useRef(`octane-${Math.random().toString(36).slice(2)}`)
+  const audioStatusRef = useRef('AUDIO OFF')
   const transportRef = useRef<{ stop: () => void } | null>(null)
 
   const nodesRaw = useSurveillanceIntelStore((state) => state.nodes)
@@ -295,6 +313,10 @@ export default function Surveillance() {
   }, [audioBands])
 
   useEffect(() => {
+    audioStatusRef.current = audioStatus
+  }, [audioStatus])
+
+  useEffect(() => {
     const timer = window.setInterval(() => setClockNow(Date.now()), 1_000)
     return () => window.clearInterval(timer)
   }, [])
@@ -422,6 +444,17 @@ export default function Surveillance() {
     setAudioLevel(0)
     setAudioBands({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
     setAudioStatus('AUDIO OFF')
+    const channel = audioShareRef.current
+    if (channel) {
+      const payload: SharedAudioFrame = {
+        sourceId: audioSourceIdRef.current,
+        timestamp: Date.now(),
+        status: 'AUDIO OFF',
+        level: 0,
+        bands: { bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 },
+      }
+      channel.postMessage(payload)
+    }
   }, [])
 
   const startAudioReactive = useCallback(async () => {
@@ -432,8 +465,51 @@ export default function Surveillance() {
 
     setAudioStatus('REQUESTING...')
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-      const context = new AudioContext()
+      let stream: MediaStream | null = null
+      let modeLabel = 'MIC'
+
+      if (audioInputMode !== 'microphone' && navigator.mediaDevices?.getDisplayMedia) {
+        try {
+          const displayMediaConstraints: MediaStreamConstraints & {
+            preferCurrentTab?: boolean
+            selfBrowserSurface?: 'include' | 'exclude'
+            surfaceSwitching?: 'include' | 'exclude'
+            systemAudio?: 'include' | 'exclude'
+            monitorTypeSurfaces?: 'include' | 'exclude'
+          } = {
+            video: true,
+            audio: true,
+            preferCurrentTab: false,
+            selfBrowserSurface: 'include',
+            surfaceSwitching: 'include',
+            systemAudio: 'include',
+            monitorTypeSurfaces: 'include',
+          }
+
+          stream = await navigator.mediaDevices.getDisplayMedia(displayMediaConstraints)
+          if (!stream.getAudioTracks().length) {
+            stream.getTracks().forEach((track) => track.stop())
+            stream = null
+          } else {
+            modeLabel = 'SYSTEM'
+          }
+        } catch {
+          stream = null
+          if (audioInputMode === 'system') throw new Error('System audio capture unavailable')
+        }
+      }
+
+      if (!stream && audioInputMode !== 'system') {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        modeLabel = 'MIC'
+      }
+
+      if (!stream) throw new Error('No audio stream available')
+
+      const AudioCtor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!AudioCtor) throw new Error('Web Audio unsupported')
+
+      const context = new AudioCtor()
       const analyser = context.createAnalyser()
       analyser.fftSize = 512
       analyser.smoothingTimeConstant = 0.86
@@ -462,16 +538,63 @@ export default function Surveillance() {
         audioBandsRef.current = nextBands
         setAudioLevel(Math.max(0, Math.min(1, energy)))
         setAudioBands(nextBands)
+        const channel = audioShareRef.current
+        if (channel) {
+          const payload: SharedAudioFrame = {
+            sourceId: audioSourceIdRef.current,
+            timestamp: Date.now(),
+            status: `${modeLabel} LIVE`,
+            level: Math.max(0, Math.min(1, energy)),
+            bands: nextBands,
+          }
+          channel.postMessage(payload)
+        }
         audioRef.current.raf = window.requestAnimationFrame(loop)
       }
 
       audioRef.current = { context, analyser, source, stream }
-      setAudioStatus('MIC LIVE')
+      setAudioStatus(`${modeLabel} LIVE`)
       loop()
     } catch {
       stopAudioReactive()
     }
-  }, [stopAudioReactive])
+  }, [audioInputMode, stopAudioReactive])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') return
+
+    const channel = new BroadcastChannel(AUDIO_SHARE_CHANNEL)
+    audioShareRef.current = channel
+
+    channel.onmessage = (event: MessageEvent<SharedAudioFrame>) => {
+      const incoming = event.data
+      if (!incoming || incoming.sourceId === audioSourceIdRef.current) return
+      if (audioRef.current.stream) return
+
+      lastRemoteAudioAtRef.current = incoming.timestamp
+      audioBandsRef.current = incoming.bands
+      setAudioLevel(incoming.level)
+      setAudioBands(incoming.bands)
+      setAudioStatus(incoming.status === 'AUDIO OFF' ? 'AUDIO OFF' : `REMOTE ${incoming.status}`)
+    }
+
+    const timeoutWatcher = window.setInterval(() => {
+      if (audioRef.current.stream) return
+      const status = audioStatusRef.current
+      if (status === 'AUDIO OFF' || status === 'REQUESTING...') return
+      if (status.startsWith('REMOTE') && Date.now() - lastRemoteAudioAtRef.current > REMOTE_AUDIO_TIMEOUT_MS) {
+        setAudioLevel(0)
+        setAudioBands({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
+        setAudioStatus('AUDIO OFF')
+      }
+    }, 1_000)
+
+    return () => {
+      window.clearInterval(timeoutWatcher)
+      channel.close()
+      audioShareRef.current = null
+    }
+  }, [])
 
   useEffect(() => stopAudioReactive, [stopAudioReactive])
 
@@ -521,6 +644,16 @@ export default function Surveillance() {
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">
             <div className="flex flex-wrap items-center justify-end gap-2">
               <button type="button" onClick={() => void startAudioReactive()} className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">{audioStatus === 'AUDIO OFF' ? 'Enable Audio' : 'Disable Audio'}</button>
+              <select
+                value={audioInputMode}
+                onChange={(event) => setAudioInputMode(event.target.value as AudioInputMode)}
+                className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--text)]"
+              >
+                <option value="auto">Auto Source</option>
+                <option value="system">System / Tab</option>
+                <option value="microphone">Microphone</option>
+              </select>
+              <span className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Cross-tab share on</span>
               <button type="button" onClick={() => setWireframesVisible((current) => !current)} className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">{wireframesVisible ? 'Hide Wireframes' : 'Show Wireframes'}</button>
               <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Refresh</span>
               <select

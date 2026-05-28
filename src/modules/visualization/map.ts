@@ -54,6 +54,23 @@ type RingAudioProfile = {
   phase: number
 }
 
+type NodeAudioProfile = {
+  marker: CircleMarker
+  baseRadius: number
+  baseOpacity: number
+  baseFillOpacity: number
+  phase: number
+  statusBoost: number
+}
+
+type GeoAudioProfile = {
+  ring: L.Circle
+  baseRadiusMeters: number
+  baseOpacity: number
+  baseFillOpacity: number
+  phase: number
+}
+
 type AmbientAudioDot = {
   dot: CircleMarker
   baseRadius: number
@@ -66,12 +83,35 @@ type AmbientAudioDot = {
 
 type GlobalEventCategory = 'traffic' | 'weather' | 'wildfire' | 'police' | 'service'
 
+const GLOBAL_EVENT_CATEGORIES: GlobalEventCategory[] = ['traffic', 'weather', 'wildfire', 'police', 'service']
+
+const CATEGORY_BEACON_POINTS: Record<GlobalEventCategory, LatLng> = {
+  traffic: [40.7128, -74.006],
+  weather: [35.6762, 139.6503],
+  wildfire: [34.0522, -118.2437],
+  police: [51.5074, -0.1278],
+  service: [25.2048, 55.2708],
+}
+
 type GlobalEventDotProfile = {
   dot: CircleMarker
   baseRadius: number
   severityFactor: number
   phase: number
   category: GlobalEventCategory
+}
+
+type DataCenterCity = {
+  id: string
+  label: string
+  lat: number
+  lng: number
+}
+
+type DataCenterDotProfile = {
+  dot: CircleMarker
+  baseRadius: number
+  phase: number
 }
 
 const GLOBAL_EVENT_DOT_COLORS: Record<GlobalEventCategory, { stroke: string; fill: string; label: string }> = {
@@ -107,6 +147,92 @@ const NETWORK_POINTS: LatLng[] = [
   [-6, 120], [-16, 134], [-24, 146], [-31, 153], [-19, 121],
   [-28, 133], [-34, 147],
   [65, 40], [60, 70], [56, 98], [60, 130],
+]
+
+const DATA_CENTER_CITIES: DataCenterCity[] = [
+  { id: 'nyc', label: 'NYC', lat: 40.7128, lng: -74.006 },
+  { id: 'la', label: 'LA', lat: 34.0522, lng: -118.2437 },
+  { id: 'shanghai', label: 'Shanghai', lat: 31.2304, lng: 121.4737 },
+  { id: 'dubai', label: 'Dubai', lat: 25.2048, lng: 55.2708 },
+  { id: 'france_paris', label: 'France (Paris)', lat: 48.8566, lng: 2.3522 },
+  { id: 'london', label: 'London', lat: 51.5074, lng: -0.1278 },
+  { id: 'milan', label: 'Milan', lat: 45.4642, lng: 9.19 },
+  { id: 'berlin', label: 'Berlin', lat: 52.52, lng: 13.405 },
+  { id: 'brussels', label: 'Brussels', lat: 50.8503, lng: 4.3517 },
+  { id: 'amsterdam', label: 'Amsterdam', lat: 52.3676, lng: 4.9041 },
+  { id: 'moscow', label: 'Moscow', lat: 55.7558, lng: 37.6173 },
+  { id: 'kyiv', label: 'Kyiv', lat: 50.4501, lng: 30.5234 },
+  { id: 'tokyo', label: 'Tokyo', lat: 35.6762, lng: 139.6503 },
+  { id: 'sydney', label: 'Sydney', lat: -33.8688, lng: 151.2093 },
+  { id: 'rio', label: 'Rio de Janeiro', lat: -22.9068, lng: -43.1729 },
+  { id: 'mexico_city', label: 'Mexico City', lat: 19.4326, lng: -99.1332 },
+  { id: 'miami', label: 'Miami', lat: 25.7617, lng: -80.1918 },
+  { id: 'chicago', label: 'Chicago', lat: 41.8781, lng: -87.6298 },
+  { id: 'toronto', label: 'Toronto', lat: 43.6532, lng: -79.3832 },
+  { id: 'seattle', label: 'Seattle', lat: 47.6062, lng: -122.3321 },
+  { id: 'washington_dc', label: 'Washington, D.C.', lat: 38.9072, lng: -77.0369 },
+  { id: 'las_vegas', label: 'Las Vegas', lat: 36.1699, lng: -115.1398 },
+  { id: 'zagreb', label: 'Zagreb', lat: 45.815, lng: 15.9819 },
+  { id: 'madrid', label: 'Madrid', lat: 40.4168, lng: -3.7038 },
+  { id: 'kabul', label: 'Kabul', lat: 34.5553, lng: 69.2075 },
+  { id: 'taipei', label: 'Taipei', lat: 25.033, lng: 121.5654 },
+  { id: 'seoul', label: 'Seoul', lat: 37.5665, lng: 126.978 },
+  { id: 'st_petersburg', label: 'St Petersburg', lat: 59.9311, lng: 30.3609 },
+]
+
+const OCEANIC_CABLE_LINKS: Array<[string, string]> = [
+  ['nyc', 'london'],
+  ['nyc', 'france_paris'],
+  ['nyc', 'amsterdam'],
+  ['nyc', 'madrid'],
+  ['nyc', 'rio'],
+  ['la', 'tokyo'],
+  ['la', 'sydney'],
+  ['seattle', 'tokyo'],
+  ['miami', 'rio'],
+  ['miami', 'london'],
+  ['tokyo', 'sydney'],
+  ['dubai', 'london'],
+]
+
+const GLOBAL_CITY_WIREFRAME_LINKS: Array<[string, string]> = [
+  ['nyc', 'toronto'],
+  ['nyc', 'washington_dc'],
+  ['nyc', 'chicago'],
+  ['nyc', 'miami'],
+  ['la', 'seattle'],
+  ['la', 'las_vegas'],
+  ['la', 'mexico_city'],
+  ['mexico_city', 'miami'],
+  ['toronto', 'chicago'],
+  ['chicago', 'seattle'],
+  ['chicago', 'miami'],
+  ['london', 'france_paris'],
+  ['london', 'amsterdam'],
+  ['london', 'brussels'],
+  ['london', 'berlin'],
+  ['london', 'milan'],
+  ['france_paris', 'brussels'],
+  ['france_paris', 'madrid'],
+  ['france_paris', 'milan'],
+  ['amsterdam', 'brussels'],
+  ['berlin', 'brussels'],
+  ['berlin', 'zagreb'],
+  ['berlin', 'moscow'],
+  ['berlin', 'kyiv'],
+  ['kyiv', 'moscow'],
+  ['moscow', 'st_petersburg'],
+  ['kyiv', 'zagreb'],
+  ['milan', 'zagreb'],
+  ['madrid', 'london'],
+  ['dubai', 'kabul'],
+  ['dubai', 'moscow'],
+  ['dubai', 'france_paris'],
+  ['tokyo', 'seoul'],
+  ['tokyo', 'taipei'],
+  ['tokyo', 'shanghai'],
+  ['seoul', 'shanghai'],
+  ['taipei', 'shanghai'],
 ]
 
 function markerColor(node: VisualizationNode, config: VisualizationConfig): string {
@@ -323,10 +449,15 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
 
   const continentMeshLines: Polyline[] = []
   const continentMeshNodes: CircleMarker[] = []
+  const dataCenterDotProfiles: DataCenterDotProfile[] = []
   const reactiveBursts: ReactiveBurst[] = []
   const ambientAudioDots: AmbientAudioDot[] = []
   const gridAudioProfiles: WireAudioProfile[] = []
   const globalEventDotProfiles: GlobalEventDotProfile[] = []
+  let nodeMarkerProfiles: NodeAudioProfile[] = []
+  let latencyRingAudioProfiles: RingAudioProfile[] = []
+  let subsystemRingAudioProfiles: RingAudioProfile[] = []
+  let geoRingAudioProfiles: GeoAudioProfile[] = []
   let routeAudioProfiles: WireAudioProfile[] = []
   let alertRingProfiles: RingAudioProfile[] = []
 
@@ -381,6 +512,14 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
           opacity: 0,
         })
       })
+
+      dataCenterDotProfiles.forEach((profile) => {
+        profile.dot.setRadius(0.1)
+        profile.dot.setStyle({
+          fillOpacity: 0,
+          opacity: 0,
+        })
+      })
     }
 
     if (visible) {
@@ -403,6 +542,14 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
         node.setStyle({
           fillOpacity: 0.92,
           opacity: 0.9,
+        })
+      })
+
+      dataCenterDotProfiles.forEach((profile) => {
+        profile.dot.setRadius(profile.baseRadius)
+        profile.dot.setStyle({
+          fillOpacity: 0.94,
+          opacity: 0.96,
         })
       })
 
@@ -447,6 +594,81 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       className: 'surveillance-mesh-node',
     }).addTo(meshLayer)
     continentMeshNodes.push(meshNode)
+  })
+
+  const dataCenterById = new Map(DATA_CENTER_CITIES.map((city) => [city.id, city]))
+  const missingDataCenterIds = new Set<string>()
+  const registerMissingId = (id: string) => {
+    if (missingDataCenterIds.has(id)) return
+    missingDataCenterIds.add(id)
+    console.warn(`Missing data center city id in wireframe config: ${id}`)
+  }
+
+  const drawCableLink = (
+    fromId: string,
+    toId: string,
+    color: string,
+    opacity: number,
+    weight: number,
+  ) => {
+    const from = dataCenterById.get(fromId)
+    const to = dataCenterById.get(toId)
+    if (!from) {
+      registerMissingId(fromId)
+      return
+    }
+    if (!to) {
+      registerMissingId(toId)
+      return
+    }
+
+    const line = L.polyline(curvedRouteSegments([from.lat, from.lng], [to.lat, to.lng]), {
+      color,
+      weight,
+      opacity,
+      interactive: false,
+      className: 'surveillance-continent-mesh surveillance-oceanic-cable',
+    }).addTo(meshLayer)
+    continentMeshLines.push(line)
+  }
+
+  OCEANIC_CABLE_LINKS.forEach(([fromId, toId], index) => {
+    drawCableLink(
+      fromId,
+      toId,
+      '#9df6ff',
+      index % 2 === 0 ? 0.86 : 0.72,
+      index % 2 === 0 ? 1.5 : 1.25,
+    )
+  })
+
+  GLOBAL_CITY_WIREFRAME_LINKS.forEach(([fromId, toId], index) => {
+    drawCableLink(
+      fromId,
+      toId,
+      '#7cefff',
+      index % 5 === 0 ? 0.64 : 0.52,
+      index % 5 === 0 ? 1.2 : 1,
+    )
+  })
+
+  DATA_CENTER_CITIES.forEach((city, index) => {
+    const baseRadius = index % 4 === 0 ? 4.4 : 3.6
+    const dot = L.circleMarker([city.lat, city.lng], {
+      radius: baseRadius,
+      color: '#96f8ff',
+      fillColor: '#dcfeff',
+      fillOpacity: 0.94,
+      opacity: 0.96,
+      weight: 1,
+      className: 'surveillance-mesh-node surveillance-data-center-dot',
+    }).addTo(meshLayer)
+    dot.bindTooltip(`${city.label} · Data Center City`, { direction: 'top', opacity: 0.92 })
+    dataCenterDotProfiles.push({
+      dot,
+      baseRadius,
+      phase: (index * 0.31) + (city.lat * 0.01),
+    })
   })
 
   const pruneReactiveBursts = () => {
@@ -682,8 +904,6 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     if (!wireframesVisible) {
       queuedBurstSpawns = 0
       if (reactiveBursts.length > 0) pruneReactiveBursts()
-      if (globalEventDotProfiles.length > 0 && motionStep % 2 === 0) applyGlobalEventDotSizing()
-      return
     }
 
     // When audio is off, skip all setStyle work — static CSS handles base appearance.
@@ -691,6 +911,28 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     if (!audioReactiveEnabled) {
       queuedBurstSpawns = 0
       if (reactiveBursts.length > 0) pruneReactiveBursts()
+      nodeMarkerProfiles.forEach((profile) => {
+        profile.marker.setRadius(profile.baseRadius)
+        profile.marker.setStyle({
+          opacity: profile.baseOpacity,
+          fillOpacity: profile.baseFillOpacity,
+        })
+      })
+      latencyRingAudioProfiles.forEach((profile) => {
+        profile.ring.setRadius(profile.baseRadius)
+        profile.ring.setStyle({ opacity: 0.35, weight: 1 })
+      })
+      subsystemRingAudioProfiles.forEach((profile) => {
+        profile.ring.setRadius(profile.baseRadius)
+        profile.ring.setStyle({ opacity: 0.72, weight: 1.1 })
+      })
+      geoRingAudioProfiles.forEach((profile) => {
+        profile.ring.setRadius(profile.baseRadiusMeters)
+        profile.ring.setStyle({
+          opacity: profile.baseOpacity,
+          fillOpacity: profile.baseFillOpacity,
+        })
+      })
       if (globalEventDotProfiles.length > 0) applyGlobalEventDotSizing()
       return
     }
@@ -704,37 +946,94 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
 
     // Skip grid line updates — too many elements (30+) and barely visible under tiles.
     // Stagger mesh, routes, and ring updates so pulse spikes do not update every element at once.
-    continentMeshLines.forEach((line, index) => {
-      if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
-        const stride = 0.74 + (((index % 9) / 8) * 0.6)
-        const shimmer = 0.5 + (Math.sin((motionStep * 0.1 * stride) + index) * 0.5)
-        const energy = clamp01((pulse * (0.62 + (shimmer * 0.38))) + (beat * 0.24))
-        line.setStyle({
-          opacity: 0.22 + (energy * 0.68),
-          weight: 0.85 + (energy * 1.6),
+    if (wireframesVisible) {
+      continentMeshLines.forEach((line, index) => {
+        if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
+          const stride = 0.74 + (((index % 9) / 8) * 0.6)
+          const shimmer = 0.5 + (Math.sin((motionStep * 0.1 * stride) + index) * 0.5)
+          const energy = clamp01((pulse * (0.62 + (shimmer * 0.38))) + (beat * 0.24))
+          line.setStyle({
+            opacity: 0.22 + (energy * 0.68),
+            weight: 0.85 + (energy * 1.6),
+          })
+        })
+
+      continentMeshNodes.forEach((node, index) => {
+        if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
+          const jitter = 0.55 + (Math.sin((motionStep * 0.16) + index) * 0.45)
+          const nodeEnergy = clamp01((pulse * 0.75) + (jitter * 0.25))
+          const radius = (index % 7 === 0 ? 3.1 : 2.0) + (nodeEnergy * (2.4 + (bass * 0.8)))
+          node.setRadius(radius)
+          node.setStyle({
+            fillOpacity: 0.24 + (nodeEnergy * 0.72),
+            opacity: 0.32 + (nodeEnergy * 0.64),
+          })
+        })
+
+      dataCenterDotProfiles.forEach((profile, index) => {
+        if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
+        const shimmer = 0.5 + (Math.sin((motionStep * 0.14) + profile.phase + (index * 0.2)) * 0.5)
+        const cityEnergy = clamp01((pulse * 0.54) + (beat * 0.3) + (treble * 0.18) + (shimmer * 0.24))
+        profile.dot.setRadius(profile.baseRadius + (cityEnergy * 2.8))
+        profile.dot.setStyle({
+          fillOpacity: 0.3 + (cityEnergy * 0.66),
+          opacity: 0.42 + (cityEnergy * 0.56),
         })
       })
 
-    continentMeshNodes.forEach((node, index) => {
-      if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
-        const jitter = 0.55 + (Math.sin((motionStep * 0.16) + index) * 0.45)
-        const nodeEnergy = clamp01((pulse * 0.75) + (jitter * 0.25))
-        const radius = (index % 7 === 0 ? 3.1 : 2.0) + (nodeEnergy * (2.4 + (bass * 0.8)))
-        node.setRadius(radius)
-        node.setStyle({
-          fillOpacity: 0.24 + (nodeEnergy * 0.72),
-          opacity: 0.32 + (nodeEnergy * 0.64),
+      routeAudioProfiles.forEach((profile, index) => {
+        if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
+        const shimmer = 0.5 + (Math.sin((motionStep * 0.14) + profile.phase + (index * 0.17)) * 0.5)
+        const energy = clamp01((pulse * 0.56) + (beat * 0.34) + (mid * 0.2) + (shimmer * 0.26))
+        const visibility = clamp01((energy * 1.18) - 0.2)
+        profile.line.setStyle({
+          opacity: 0.03 + (visibility * ((profile.baseOpacity * 0.9) + (0.5 * profile.intensity))),
+          weight: 0.26 + (visibility * ((profile.baseWeight * 0.86) + (1.8 * profile.intensity))),
         })
       })
+    }
 
-    routeAudioProfiles.forEach((profile, index) => {
+    nodeMarkerProfiles.forEach((profile, index) => {
       if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
-      const shimmer = 0.5 + (Math.sin((motionStep * 0.14) + profile.phase + (index * 0.17)) * 0.5)
-      const energy = clamp01((pulse * 0.56) + (beat * 0.34) + (mid * 0.2) + (shimmer * 0.26))
-      const visibility = clamp01((energy * 1.18) - 0.2)
-      profile.line.setStyle({
-        opacity: 0.03 + (visibility * ((profile.baseOpacity * 0.9) + (0.5 * profile.intensity))),
-        weight: 0.26 + (visibility * ((profile.baseWeight * 0.86) + (1.8 * profile.intensity))),
+      const shimmer = 0.5 + (Math.sin((motionStep * 0.18) + profile.phase + (index * 0.27)) * 0.5)
+      const nodeEnergy = clamp01((pulse * 0.45) + (beat * 0.34) + (mid * 0.2) + (shimmer * 0.22) + profile.statusBoost)
+      profile.marker.setRadius(profile.baseRadius + (nodeEnergy * 2.5))
+      profile.marker.setStyle({
+        opacity: Math.min(1, profile.baseOpacity + (nodeEnergy * 0.18)),
+        fillOpacity: Math.min(1, profile.baseFillOpacity + (nodeEnergy * 0.12)),
+      })
+    })
+
+    latencyRingAudioProfiles.forEach((profile, index) => {
+      if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
+      const shimmer = 0.5 + (Math.sin((motionStep * 0.15) + profile.phase + (index * 0.21)) * 0.5)
+      const ringEnergy = clamp01((pulse * 0.4) + (bass * 0.3) + (mid * 0.2) + (shimmer * 0.22))
+      profile.ring.setRadius(profile.baseRadius + (ringEnergy * 6.4))
+      profile.ring.setStyle({
+        opacity: 0.22 + (ringEnergy * 0.56),
+        weight: 0.8 + (ringEnergy * 1.1),
+      })
+    })
+
+    subsystemRingAudioProfiles.forEach((profile, index) => {
+      if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
+      const shimmer = 0.5 + (Math.sin((motionStep * 0.17) + profile.phase + (index * 0.18)) * 0.5)
+      const ringEnergy = clamp01((pulse * 0.36) + (beat * 0.34) + (treble * 0.24) + (shimmer * 0.18))
+      profile.ring.setRadius(profile.baseRadius + (ringEnergy * 7.8))
+      profile.ring.setStyle({
+        opacity: 0.3 + (ringEnergy * 0.62),
+        weight: 0.9 + (ringEnergy * 1.5),
+      })
+    })
+
+    geoRingAudioProfiles.forEach((profile, index) => {
+      if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
+      const shimmer = 0.5 + (Math.sin((motionStep * 0.1) + profile.phase + (index * 0.14)) * 0.5)
+      const geoEnergy = clamp01((pulse * 0.3) + (mid * 0.28) + (treble * 0.2) + (shimmer * 0.22))
+      profile.ring.setRadius(profile.baseRadiusMeters * (1 + (geoEnergy * 0.018)))
+      profile.ring.setStyle({
+        opacity: Math.min(0.86, profile.baseOpacity + (geoEnergy * 0.32)),
+        fillOpacity: Math.min(0.3, profile.baseFillOpacity + (geoEnergy * 0.07)),
       })
     })
 
@@ -754,15 +1053,18 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     updateAmbientAudioDots(loudness, tempo, treble, pulse)
     applyGlobalEventDotSizing()
 
-    const performancePressure = clamp01((reactiveBursts.length / MAX_REACTIVE_BURSTS) * 0.65)
-    const spawnChance = clamp01((0.08 + (pulse * 0.44) + (beat * 0.34)) * (1 - (performancePressure * 0.55)))
+    if (wireframesVisible) {
+      const performancePressure = clamp01((reactiveBursts.length / MAX_REACTIVE_BURSTS) * 0.65)
+      const spawnChance = clamp01((0.08 + (pulse * 0.44) + (beat * 0.34)) * (1 - (performancePressure * 0.55)))
 
-    if (Math.random() < spawnChance) {
-      const burstCount = Math.max(1, Math.round((1 + (beat * 2.4)) * (1 - (performancePressure * 0.65))))
-      queuedBurstSpawns = Math.min(MAX_QUEUED_BURST_SPAWNS, queuedBurstSpawns + burstCount)
+      if (Math.random() < spawnChance) {
+        const burstCount = Math.max(1, Math.round((1 + (beat * 2.4)) * (1 - (performancePressure * 0.65))))
+        queuedBurstSpawns = Math.min(MAX_QUEUED_BURST_SPAWNS, queuedBurstSpawns + burstCount)
+      }
+      flushBurstQueue(pulse, beat)
+    } else {
+      queuedBurstSpawns = 0
     }
-
-    flushBurstQueue(pulse, beat)
     pruneReactiveBursts()
   }
 
@@ -868,8 +1170,13 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     subsystemRings = []
     geoRings = []
     globalEventDotProfiles.length = 0
+    nodeMarkerProfiles = []
+    latencyRingAudioProfiles = []
+    subsystemRingAudioProfiles = []
+    geoRingAudioProfiles = []
     routeAudioProfiles = []
     alertRingProfiles = []
+    const renderedCategories = new Set<GlobalEventCategory>()
 
     const nodeById = new Map(nodes.map((node) => [node.id, node]))
     const edgeRegistry = new Set<string>()
@@ -886,6 +1193,14 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       }).addTo(markerLayer)
       marker.bindTooltip(`${node.country} · ${node.region} · ${node.latencyMs}ms · ${node.status}`, { direction: 'top', opacity: 0.92 })
       markers.push(marker)
+      nodeMarkerProfiles.push({
+        marker,
+        baseRadius: 5,
+        baseOpacity: 0.95,
+        baseFillOpacity: 0.92,
+        phase: (node.lat * 0.04) + (node.lng * 0.02),
+        statusBoost: node.status === 'CRITICAL' || node.status === 'OFFLINE' ? 0.24 : node.status === 'DEGRADED' ? 0.14 : 0.06,
+      })
 
       const latencyRing = L.circleMarker([node.lat, node.lng], {
         radius: 8 + Math.min(node.latencyMs / 28, 12),
@@ -896,6 +1211,11 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
         className: 'surveillance-latency-ring',
       }).addTo(alertLayer)
       latencyRings.push(latencyRing)
+      latencyRingAudioProfiles.push({
+        ring: latencyRing,
+        baseRadius: 8 + Math.min(node.latencyMs / 28, 12),
+        phase: (node.lat * 0.06) + (node.lng * 0.03),
+      })
 
       for (const connectionId of node.connections) {
         if (!showFlows) continue
@@ -954,6 +1274,11 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       }).addTo(subsystemLayer)
       ring.bindTooltip(`${subsystem.label} · ${(load * 100).toFixed(0)}%`, { direction: 'top', opacity: 0.9 })
       subsystemRings.push(ring)
+      subsystemRingAudioProfiles.push({
+        ring,
+        baseRadius: 14 + (load * 16),
+        phase: (subsystem.lat * 0.05) + (subsystem.lng * 0.025),
+      })
     })
 
     geo.forEach((overlay: VisualizationGeoOverlay) => {
@@ -968,6 +1293,13 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
         interactive: false,
       }).addTo(geoLayer)
       geoRings.push(ring)
+      geoRingAudioProfiles.push({
+        ring,
+        baseRadiusMeters: Math.max(60_000, overlay.radiusKm * 1000),
+        baseOpacity: 0.2 + (load * 0.3),
+        baseFillOpacity: 0.04 + (load * 0.08),
+        phase: (overlay.lat * 0.03) + (overlay.lng * 0.016),
+      })
     })
 
     for (const alert of alerts) {
@@ -1033,6 +1365,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
         },
       )
       globalEventDots.push(eventDot)
+      renderedCategories.add(category)
       globalEventDotProfiles.push({
         dot: eventDot,
         baseRadius,
@@ -1054,6 +1387,42 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       alertsRings.push(ring)
       alertRingProfiles.push({ ring, baseRadius: 10, phase: (node.lat * 0.05) + (node.lng * 0.03) })
     }
+
+    GLOBAL_EVENT_CATEGORIES.forEach((category) => {
+      if (renderedCategories.has(category)) return
+
+      const palette = GLOBAL_EVENT_DOT_COLORS[category]
+      const anchor = CATEGORY_BEACON_POINTS[category]
+      const beaconDot = L.circleMarker(anchor, {
+        radius: 1.9,
+        color: palette.stroke,
+        fillColor: palette.fill,
+        fillOpacity: 0.86,
+        opacity: 0.92,
+        weight: 1,
+        className: 'surveillance-global-event-dot',
+      }).addTo(globalEventLayer)
+
+      beaconDot.bindTooltip(
+        `<strong>${palette.label} Beacon</strong><br/>`
+        + `<span>Category visibility maintained</span><br/>`
+        + `<span>No high-confidence live incidents in current feed.</span>`,
+        {
+          direction: 'top',
+          opacity: 0.92,
+          sticky: true,
+        },
+      )
+
+      globalEventDots.push(beaconDot)
+      globalEventDotProfiles.push({
+        dot: beaconDot,
+        baseRadius: 1.9,
+        severityFactor: 0.9,
+        phase: Math.random() * Math.PI * 2,
+        category,
+      })
+    })
 
     applyGlobalEventDotSizing()
 
