@@ -1,8 +1,20 @@
 import L, { type CircleMarker, type Map as LeafletMap, type Polyline } from 'leaflet'
-import type { VisualizationAlert, VisualizationConfig, VisualizationNode } from './types'
+import type {
+  VisualizationAlert,
+  VisualizationConfig,
+  VisualizationGeoOverlay,
+  VisualizationLayerPayload,
+  VisualizationNode,
+  VisualizationSubsystem,
+} from './types'
 
 type MapController = {
-  setData: (nodes: VisualizationNode[], alerts: VisualizationAlert[], focusedNodeId?: string) => void
+  setData: (
+    nodes: VisualizationNode[],
+    alerts: VisualizationAlert[],
+    focusedNodeId?: string,
+    layers?: VisualizationLayerPayload,
+  ) => void
   setAltitude: (altitude: number) => void
   setAudioReactive: (enabled: boolean, level?: number, bands?: AudioReactiveBands) => void
   setWireframesVisible: (visible: boolean) => void
@@ -303,6 +315,8 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
   const reactiveMeshLayer = L.layerGroup().addTo(map)
   const ambientDotLayer = L.layerGroup().addTo(map)
   const globalEventLayer = L.layerGroup().addTo(map)
+  const subsystemLayer = L.layerGroup().addTo(map)
+  const geoLayer = L.layerGroup().addTo(map)
   const markerLayer = L.layerGroup().addTo(map)
   const connectionLayer = L.layerGroup().addTo(map)
   const alertLayer = L.layerGroup().addTo(map)
@@ -782,6 +796,8 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
   let alertsRings: CircleMarker[] = []
   let latencyRings: CircleMarker[] = []
   let globalEventDots: CircleMarker[] = []
+  let subsystemRings: CircleMarker[] = []
+  let geoRings: Array<L.Circle> = []
   let hasInitialBounds = false
   let lastFocusedNodeId: string | undefined
 
@@ -826,19 +842,31 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     requestAnimationFrame(() => forceFullSize())
   })
 
-  const setData = (nodes: VisualizationNode[], alerts: VisualizationAlert[], focusedNodeId?: string) => {
+  const setData = (
+    nodes: VisualizationNode[],
+    alerts: VisualizationAlert[],
+    focusedNodeId?: string,
+    layers?: VisualizationLayerPayload,
+  ) => {
     forceFullSize()
+    const showFlows = layers?.showFlows ?? true
+    const subsystems = layers?.subsystems ?? []
+    const geo = layers?.geo ?? []
 
     markers.forEach((marker) => marker.remove())
     connections.forEach((line) => line.remove())
     alertsRings.forEach((marker) => marker.remove())
     latencyRings.forEach((ring) => ring.remove())
     globalEventDots.forEach((dot) => dot.remove())
+    subsystemRings.forEach((ring) => ring.remove())
+    geoRings.forEach((ring) => ring.remove())
     markers = []
     connections = []
     alertsRings = []
     latencyRings = []
     globalEventDots = []
+    subsystemRings = []
+    geoRings = []
     globalEventDotProfiles.length = 0
     routeAudioProfiles = []
     alertRingProfiles = []
@@ -870,6 +898,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       latencyRings.push(latencyRing)
 
       for (const connectionId of node.connections) {
+        if (!showFlows) continue
         const target = nodeById.get(connectionId)
         if (!target) continue
 
@@ -878,6 +907,8 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
         edgeRegistry.add(edgeKey)
 
         const avgLatency = (node.latencyMs + target.latencyMs) / 2
+        const avgLoad = ((node.loadPercent ?? 40) + (target.loadPercent ?? 40)) / 2
+        const loadFactor = Math.max(0, Math.min(1, avgLoad / 100))
         const riskLevel: 'normal' | 'elevated' | 'critical' = (
           node.status === 'CRITICAL' || node.status === 'OFFLINE' || target.status === 'CRITICAL' || target.status === 'OFFLINE'
             ? 'critical'
@@ -889,9 +920,9 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
         const line = L.polyline(curvedRouteSegments([node.lat, node.lng], [target.lat, target.lng]), {
           color: routeColor(node, target, config),
           opacity: wireframesVisible
-            ? (riskLevel === 'critical' ? 0.72 : riskLevel === 'elevated' ? 0.56 : 0.44)
+            ? ((riskLevel === 'critical' ? 0.72 : riskLevel === 'elevated' ? 0.56 : 0.44) + (loadFactor * 0.14))
             : 0,
-          weight: riskLevel === 'critical' ? 1.9 : riskLevel === 'elevated' ? 1.5 : 1.15,
+          weight: (riskLevel === 'critical' ? 1.9 : riskLevel === 'elevated' ? 1.5 : 1.15) + (loadFactor * 0.8),
           className: 'surveillance-route-line',
         }).addTo(connectionLayer)
         applyRouteDynamics(line, avgLatency, riskLevel)
@@ -899,13 +930,45 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
         connections.push(line)
         routeAudioProfiles.push({
           line,
-          baseOpacity: riskLevel === 'critical' ? 0.72 : riskLevel === 'elevated' ? 0.56 : 0.44,
-          baseWeight: riskLevel === 'critical' ? 1.9 : riskLevel === 'elevated' ? 1.5 : 1.15,
-          intensity: riskLevel === 'critical' ? 1 : riskLevel === 'elevated' ? 0.82 : 0.68,
+          baseOpacity: (riskLevel === 'critical' ? 0.72 : riskLevel === 'elevated' ? 0.56 : 0.44) + (loadFactor * 0.14),
+          baseWeight: (riskLevel === 'critical' ? 1.9 : riskLevel === 'elevated' ? 1.5 : 1.15) + (loadFactor * 0.8),
+          intensity: Math.max(0.4, Math.min(1.2, (riskLevel === 'critical' ? 1 : riskLevel === 'elevated' ? 0.82 : 0.68) + (loadFactor * 0.24))),
           phase: (node.lat * 0.03) + (target.lng * 0.02),
         })
       }
     }
+
+    subsystems.forEach((subsystem: VisualizationSubsystem) => {
+      const load = Math.max(0, Math.min(1, subsystem.load))
+      const ring = L.circleMarker([subsystem.lat, subsystem.lng], {
+        radius: 14 + (load * 16),
+        color: subsystem.status === 'CRITICAL' || subsystem.status === 'OFFLINE'
+          ? config.colors.critical
+          : subsystem.status === 'DEGRADED'
+            ? config.colors.degraded
+            : '#58b7ff',
+        fillOpacity: 0,
+        opacity: 0.72,
+        weight: 1.1 + (load * 1.4),
+        className: 'surveillance-alert-ring',
+      }).addTo(subsystemLayer)
+      ring.bindTooltip(`${subsystem.label} · ${(load * 100).toFixed(0)}%`, { direction: 'top', opacity: 0.9 })
+      subsystemRings.push(ring)
+    })
+
+    geo.forEach((overlay: VisualizationGeoOverlay) => {
+      const load = Math.max(0, Math.min(1, overlay.load))
+      const ring = L.circle([overlay.lat, overlay.lng], {
+        radius: Math.max(60_000, overlay.radiusKm * 1000),
+        color: '#5eead4',
+        fillColor: '#5eead4',
+        fillOpacity: 0.04 + (load * 0.08),
+        opacity: 0.2 + (load * 0.3),
+        weight: 1,
+        interactive: false,
+      }).addTo(geoLayer)
+      geoRings.push(ring)
+    })
 
     for (const alert of alerts) {
       const node = alert.serverId ? nodeById.get(alert.serverId) : undefined
@@ -947,11 +1010,28 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       const dotTitle = alert.title ?? `${palette.label} alert`
       const dotSubtitle = `${palette.label} · ${alert.type} · ${alert.severity}`
       const dotBody = alert.description?.trim() || 'Active call in progress.'
-      eventDot.bindTooltip(`<strong>ACTIVE CALL</strong><br/>${dotTitle}<br/><span>${dotSubtitle}</span><br/><span>${dotBody}</span>`, {
-        direction: 'top',
-        opacity: 0.92,
-        sticky: true,
-      })
+      const probabilityText = typeof alert.probability === 'number' ? `${Math.round(alert.probability * 100)}%` : 'n/a'
+      const confidenceText = typeof alert.confidence === 'number' ? `${Math.round(alert.confidence * 100)}%` : 'n/a'
+      const impactText = typeof alert.impactScore === 'number' ? `${Math.round(alert.impactScore * 100)}%` : 'n/a'
+      const sourceTrace = [
+        ...(alert.simulatedEvidence?.slice(0, 2).map((entry) => `SIM:${entry.source}`) ?? []),
+        ...(alert.realWorldEvidence?.slice(0, 2).map((entry) => `OBS:${entry.source}`) ?? []),
+      ]
+      const recommendation = alert.recommendation?.[0]
+      eventDot.bindTooltip(
+        `<strong>${dotTitle}</strong><br/>`
+        + `<span>${dotSubtitle}</span><br/>`
+        + `<span>Probability: ${probabilityText} · Confidence: ${confidenceText}</span><br/>`
+        + `<span>Impact: ${impactText}${alert.priority ? ` · Priority: ${alert.priority.toUpperCase()}` : ''}</span><br/>`
+        + `<span>${dotBody}</span>`
+        + (sourceTrace.length > 0 ? `<br/><span>Sources: ${sourceTrace.join(' | ')}</span>` : '')
+        + (recommendation ? `<br/><span>Action: ${recommendation}</span>` : ''),
+        {
+          direction: 'top',
+          opacity: 0.92,
+          sticky: true,
+        },
+      )
       globalEventDots.push(eventDot)
       globalEventDotProfiles.push({
         dot: eventDot,

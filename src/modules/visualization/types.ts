@@ -9,6 +9,8 @@ export type VisualizationNode = {
   lng: number
   status: VisualizationNodeStatus
   latencyMs: number
+  loadPercent?: number
+  requestsPerMin?: number
   connections: string[]
 }
 
@@ -22,6 +24,14 @@ export type VisualizationAlert = {
   title?: string
   description?: string
   timestamp?: number
+  probability?: number
+  confidence?: number
+  impactScore?: number
+  priority?: 'critical' | 'high' | 'medium' | 'low'
+  trend?: 'rising' | 'stable' | 'falling'
+  recommendation?: string[]
+  simulatedEvidence?: Array<{ source: string; signal: string; value: string | number; quality?: number }>
+  realWorldEvidence?: Array<{ source: string; signal: string; value: string | number; quality?: number }>
   lat?: number
   lng?: number
   location?: {
@@ -30,6 +40,32 @@ export type VisualizationAlert = {
     radius?: number
   }
   resolved: boolean
+}
+
+export type VisualizationSubsystem = {
+  id: string
+  label: string
+  lat: number
+  lng: number
+  status: VisualizationNodeStatus
+  load: number
+  updatedAt: number
+}
+
+export type VisualizationGeoOverlay = {
+  id: string
+  label: string
+  lat: number
+  lng: number
+  status: string
+  load: number
+  radiusKm: number
+}
+
+export type VisualizationLayerPayload = {
+  subsystems?: VisualizationSubsystem[]
+  geo?: VisualizationGeoOverlay[]
+  showFlows?: boolean
 }
 
 export type VisualizationConfig = {

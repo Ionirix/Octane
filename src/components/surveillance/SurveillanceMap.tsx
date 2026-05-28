@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Maximize2, Minimize2 } from 'lucide-react'
 import 'leaflet/dist/leaflet.css'
 import visualizationConfig from '@/config/visualization.json'
-import type { VisualizationAlert, VisualizationNode } from '@/modules/visualization/types'
+import type {
+  VisualizationAlert,
+  VisualizationGeoOverlay,
+  VisualizationNode,
+  VisualizationSubsystem,
+} from '@/modules/visualization/types'
 import '@/styles/map.css'
 
 type MapModule = typeof import('@/modules/visualization/map')
@@ -13,6 +18,9 @@ type SurveillanceMapProps = {
   focusedNodeId: string
   nodes: VisualizationNode[]
   alerts: VisualizationAlert[]
+  subsystems?: VisualizationSubsystem[]
+  geo?: VisualizationGeoOverlay[]
+  showFlows?: boolean
   wireframesVisible?: boolean
   audioReactive?: {
     enabled: boolean
@@ -192,7 +200,18 @@ function buildMetric(alert: VisualizationAlert): string {
   return 'Incident Signal'
 }
 
-export function SurveillanceMap({ altitude, focusedNodeId, nodes, alerts, wireframesVisible = true, audioReactive, edgeToEdge }: SurveillanceMapProps) {
+export function SurveillanceMap({
+  altitude,
+  focusedNodeId,
+  nodes,
+  alerts,
+  subsystems,
+  geo,
+  showFlows = true,
+  wireframesVisible = true,
+  audioReactive,
+  edgeToEdge,
+}: SurveillanceMapProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const controllerRef = useRef<MapController | null>(null)
@@ -299,7 +318,11 @@ export function SurveillanceMap({ altitude, focusedNodeId, nodes, alerts, wirefr
       controller = module.initMap(containerRef.current, visualizationConfig)
       controllerRef.current = controller
       controller.setAltitude(altitude)
-      controller.setData(nodes, alerts, focusedNodeId)
+      controller.setData(nodes, alerts, focusedNodeId, {
+        subsystems,
+        geo,
+        showFlows,
+      })
       controller.setWireframesVisible(wireframesVisible)
       controller.setAudioReactive(
         audioReactive?.enabled ?? false,
@@ -322,11 +345,15 @@ export function SurveillanceMap({ altitude, focusedNodeId, nodes, alerts, wirefr
   }, [altitude])
 
   useEffect(() => {
-    const sig = `${nodes.length}:${alerts.length}:${alerts.map(a => `${a.id}${a.resolved ? 'r' : ''}`).join(',')}:${focusedNodeId}`
+    const sig = `${nodes.length}:${alerts.length}:${alerts.map(a => `${a.id}${a.resolved ? 'r' : ''}`).join(',')}:${subsystems?.length ?? 0}:${geo?.length ?? 0}:${showFlows ? 1 : 0}:${focusedNodeId}`
     if (sig === alertsSignatureRef.current) return
     alertsSignatureRef.current = sig
-    controllerRef.current?.setData(nodes, alerts, focusedNodeId)
-  }, [alerts, focusedNodeId, nodes])
+    controllerRef.current?.setData(nodes, alerts, focusedNodeId, {
+      subsystems,
+      geo,
+      showFlows,
+    })
+  }, [alerts, focusedNodeId, geo, nodes, showFlows, subsystems])
 
   useEffect(() => {
     controllerRef.current?.setAudioReactive(
