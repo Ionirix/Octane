@@ -62,10 +62,29 @@ export type VisualizationGeoOverlay = {
   radiusKm: number
 }
 
+export type VisualizationTrafficSegment = {
+  id: string
+  polyline: Array<[number, number]>
+  centroid: {
+    lat: number
+    lng: number
+  }
+  currentSpeedKph: number
+  freeFlowSpeedKph: number
+  congestionIndex: number
+  confidence: number
+  roadClass: 'highway' | 'arterial' | 'collector'
+  source: string
+  updatedAt: string
+  stale: boolean
+}
+
 export type VisualizationLayerPayload = {
   subsystems?: VisualizationSubsystem[]
   geo?: VisualizationGeoOverlay[]
   showFlows?: boolean
+  showTraffic?: boolean
+  trafficSegments?: VisualizationTrafficSegment[]
 }
 
 export type VisualizationConfig = {

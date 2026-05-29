@@ -123,6 +123,10 @@
   opacity: 0.9;
 }
 
+.surveillance-map-canvas .surveillance-traffic-basemap {
+  filter: saturate(1.02) brightness(1.02) contrast(1.02);
+}
+
 .surveillance-map-canvas .leaflet-pane,
 .surveillance-map-canvas .leaflet-control-container {
   /* drop-shadow removed — forces full pane compositing on every frame */
@@ -186,6 +190,51 @@
   animation-duration: var(--route-speed, 4.2s), 1.6s;
   animation-timing-function: linear, ease-in-out;
   animation-iteration-count: infinite, infinite;
+}
+
+.surveillance-map-canvas .surveillance-traffic-segment {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  shape-rendering: geometricprecision;
+}
+
+.surveillance-map-canvas .surveillance-traffic-segment--flow {
+  filter: none;
+}
+
+.traffic-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(7, 17, 31, 0.72);
+}
+
+.traffic-legend-chip::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 10px currentColor;
+}
+
+.traffic-legend-chip--clear {
+  color: #34d399;
+}
+
+.traffic-legend-chip--moderate {
+  color: #facc15;
+}
+
+.traffic-legend-chip--heavy {
+  color: #fb923c;
+}
+
+.traffic-legend-chip--severe {
+  color: #ef4444;
 }
 
 .surveillance-map-canvas.surveillance-wireframes-hidden .surveillance-gridline,

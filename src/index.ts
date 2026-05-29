@@ -33,7 +33,7 @@ const NO_CACHE_HEADERS: Record<string, string> = {
 const API_ROUTE_PREFIXES = [
   '/health', '/metrics', '/version',
   '/engine/', '/src/', '/cbe/', '/elx/', '/oan/', '/flows/', '/governance/',
-  '/api/', '/ws/',
+  '/api/', '/v6/', '/v7/', '/ws/',
 ];
 
 function isStaticAssetPath(pathname: string): boolean {

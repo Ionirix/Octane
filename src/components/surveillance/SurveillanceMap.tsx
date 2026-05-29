@@ -7,6 +7,7 @@ import type {
   VisualizationGeoOverlay,
   VisualizationNode,
   VisualizationSubsystem,
+  VisualizationTrafficSegment,
 } from '@/modules/visualization/types'
 import '@/styles/map.css'
 
@@ -18,9 +19,13 @@ type SurveillanceMapProps = {
   focusedNodeId: string
   nodes: VisualizationNode[]
   alerts: VisualizationAlert[]
+  basemapMode?: 'satellite' | 'traffic'
+  onTrafficViewportChange?: (bbox: string) => void
+  trafficSegments?: VisualizationTrafficSegment[]
   subsystems?: VisualizationSubsystem[]
   geo?: VisualizationGeoOverlay[]
   showFlows?: boolean
+  showTraffic?: boolean
   wireframesVisible?: boolean
   audioReactive?: {
     enabled: boolean
@@ -205,9 +210,13 @@ export function SurveillanceMap({
   focusedNodeId,
   nodes,
   alerts,
+  basemapMode = 'satellite',
+  onTrafficViewportChange,
+  trafficSegments,
   subsystems,
   geo,
   showFlows = true,
+  showTraffic = true,
   wireframesVisible = true,
   audioReactive,
   edgeToEdge,
@@ -318,10 +327,14 @@ export function SurveillanceMap({
       controller = module.initMap(containerRef.current, visualizationConfig)
       controllerRef.current = controller
       controller.setAltitude(altitude)
+      controller.setBasemap(basemapMode)
+      controller.setViewportChangeHandler(onTrafficViewportChange)
       controller.setData(nodes, alerts, focusedNodeId, {
+        trafficSegments,
         subsystems,
         geo,
         showFlows,
+        showTraffic,
       })
       controller.setWireframesVisible(wireframesVisible)
       controller.setAudioReactive(
@@ -345,15 +358,25 @@ export function SurveillanceMap({
   }, [altitude])
 
   useEffect(() => {
-    const sig = `${nodes.length}:${alerts.length}:${alerts.map(a => `${a.id}${a.resolved ? 'r' : ''}`).join(',')}:${subsystems?.length ?? 0}:${geo?.length ?? 0}:${showFlows ? 1 : 0}:${focusedNodeId}`
+    controllerRef.current?.setBasemap(basemapMode)
+  }, [basemapMode])
+
+  useEffect(() => {
+    controllerRef.current?.setViewportChangeHandler(onTrafficViewportChange)
+  }, [onTrafficViewportChange])
+
+  useEffect(() => {
+    const sig = `${nodes.length}:${alerts.length}:${alerts.map(a => `${a.id}${a.resolved ? 'r' : ''}`).join(',')}:${trafficSegments?.length ?? 0}:${trafficSegments?.map(segment => `${segment.id}:${segment.congestionIndex.toFixed(2)}`).join(',') ?? ''}:${subsystems?.length ?? 0}:${geo?.length ?? 0}:${showFlows ? 1 : 0}:${showTraffic ? 1 : 0}:${basemapMode}:${focusedNodeId}`
     if (sig === alertsSignatureRef.current) return
     alertsSignatureRef.current = sig
     controllerRef.current?.setData(nodes, alerts, focusedNodeId, {
+      trafficSegments,
       subsystems,
       geo,
       showFlows,
+      showTraffic,
     })
-  }, [alerts, focusedNodeId, geo, nodes, showFlows, subsystems])
+  }, [alerts, basemapMode, focusedNodeId, geo, nodes, showFlows, showTraffic, subsystems, trafficSegments])
 
   useEffect(() => {
     controllerRef.current?.setAudioReactive(

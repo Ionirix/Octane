@@ -5,7 +5,7 @@ import { createPollingIntelTransport, type IntelFocusMode } from '@/modules/surv
 import { runFusionCycle } from '@/modules/fusion'
 import { useFusedEventStore } from '@/modules/fusion/event-store'
 import { emitTelemetryEvent, type TelemetrySample } from '@/modules/visualization/telemetry'
-import type { VisualizationAlert, VisualizationGeoOverlay, VisualizationNode, VisualizationSubsystem } from '@/modules/visualization/types'
+import type { VisualizationAlert, VisualizationGeoOverlay, VisualizationNode, VisualizationSubsystem, VisualizationTrafficSegment } from '@/modules/visualization/types'
 import { useSurveillanceIntelStore } from '@/state/surveillance-intel'
 import { Panel } from '@components/primitives/Panel'
 import { MetricCard } from '@components/primitives/MetricCard'
@@ -31,6 +31,7 @@ type SharedAudioFrame = {
 
 const AUDIO_SHARE_CHANNEL = 'octane-audio-reactive-v1'
 const REMOTE_AUDIO_TIMEOUT_MS = 2_500
+const TRAFFIC_REFRESH_MS = 45_000
 
 type GlobalEventCategory = 'traffic' | 'weather' | 'wildfire' | 'police' | 'service'
 
@@ -47,6 +48,43 @@ type SurveillanceAlertFeed = {
   resolved: boolean
   resolvedAt?: number
 }
+
+type TrafficIncidentPayload = {
+  id: string
+  type: string
+  severity: VisualizationAlert['severity']
+  title: string
+  description: string
+  lat: number
+  lng: number
+  roadClass: 'highway' | 'arterial' | 'collector'
+  source: string
+  updatedAt: string
+  stale: boolean
+}
+
+type TrafficFlowResponse = {
+  ok?: boolean
+  data?: {
+    provider?: string
+    stale?: boolean
+    updatedAt?: string
+    segments?: VisualizationTrafficSegment[]
+  }
+}
+
+type TrafficIncidentResponse = {
+  ok?: boolean
+  data?: {
+    provider?: string
+    stale?: boolean
+    updatedAt?: string
+    incidents?: TrafficIncidentPayload[]
+  }
+}
+
+type TrafficRoadClass = VisualizationTrafficSegment['roadClass']
+type BasemapMode = 'satellite' | 'traffic'
 
 const FALLBACK_NODES: VisualizationNode[] = [
   { id: 'edge-na', name: 'EDGE NA', country: 'United States', region: 'North America', lat: 39.8, lng: -98.6, status: 'NOMINAL', latencyMs: 36, loadPercent: 48, requestsPerMin: 22400, connections: ['edge-eu', 'edge-apac'] },
@@ -76,6 +114,107 @@ function mapStatus(status: string): VisualizationNode['status'] {
 function formatAgo(timestamp: number, now: number): string {
   const minutes = Math.max(1, Math.round((now - timestamp) / 60_000))
   return minutes === 1 ? '1 min ago' : `${minutes} mins ago`
+}
+
+function estimateTrafficBounds(center: { lat: number; lng: number }, altitude: number): string {
+  const zoomFactor = Math.max(0.18, (100 - altitude) / 100)
+  const latSpan = 0.9 + (zoomFactor * 3.8)
+  const lngSpan = 1.3 + (zoomFactor * 5.4)
+  const west = center.lng - lngSpan
+  const south = center.lat - latSpan
+  const east = center.lng + lngSpan
+  const north = center.lat + latSpan
+  return `${west.toFixed(4)},${south.toFixed(4)},${east.toFixed(4)},${north.toFixed(4)}`
+}
+
+function simplifyTrafficPolyline(polyline: Array<[number, number]>): Array<[number, number]> {
+  if (polyline.length <= 40) return polyline
+  const stride = Math.max(2, Math.ceil(polyline.length / 32))
+  return polyline.filter((_, index) => index === 0 || index === polyline.length - 1 || (index % stride) === 0)
+}
+
+function roadPriority(roadClass: TrafficRoadClass): number {
+  if (roadClass === 'highway') return 3
+  if (roadClass === 'arterial') return 2
+  return 1
+}
+
+function dedupeTrafficSegments(segments: VisualizationTrafficSegment[]): VisualizationTrafficSegment[] {
+  const seen = new Set<string>()
+  return segments.filter((segment) => {
+    const key = `${segment.roadClass}:${segment.centroid.lat.toFixed(3)}:${segment.centroid.lng.toFixed(3)}:${segment.currentSpeedKph}:${segment.freeFlowSpeedKph}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function curateTrafficSegments(segments: VisualizationTrafficSegment[], altitude: number, basemapMode: BasemapMode): VisualizationTrafficSegment[] {
+  const deduped = dedupeTrafficSegments(segments)
+    .map((segment) => ({
+      ...segment,
+      polyline: simplifyTrafficPolyline(segment.polyline),
+    }))
+    .filter((segment) => segment.polyline.length >= 2)
+
+  const ranked = [...deduped].sort((left, right) => {
+    const roadDelta = roadPriority(right.roadClass) - roadPriority(left.roadClass)
+    if (roadDelta !== 0) return roadDelta
+    const congestionDelta = right.congestionIndex - left.congestionIndex
+    if (Math.abs(congestionDelta) > 0.02) return congestionDelta
+    return right.confidence - left.confidence
+  })
+
+  const zoomFactor = Math.max(0.18, (100 - altitude) / 100)
+  const trafficMode = basemapMode === 'traffic'
+  const budgets: Record<TrafficRoadClass, number> = {
+    highway: Math.round((trafficMode ? 120 : 72) + (zoomFactor * (trafficMode ? 150 : 96))),
+    arterial: Math.round((trafficMode ? 96 : 56) + (zoomFactor * (trafficMode ? 132 : 88))),
+    collector: Math.round((trafficMode ? 48 : 18) + (zoomFactor * (trafficMode ? 76 : 40))),
+  }
+  const counts: Record<TrafficRoadClass, number> = {
+    highway: 0,
+    arterial: 0,
+    collector: 0,
+  }
+
+  const curated: VisualizationTrafficSegment[] = []
+  ranked.forEach((segment) => {
+    if (segment.congestionIndex >= (trafficMode ? 0.18 : 0.4)) {
+      curated.push(segment)
+      counts[segment.roadClass] += 1
+      return
+    }
+    if (counts[segment.roadClass] >= budgets[segment.roadClass]) return
+    counts[segment.roadClass] += 1
+    curated.push(segment)
+  })
+
+  return curated
+}
+
+function congestionTone(congestionIndex: number): 'clear' | 'moderate' | 'heavy' | 'severe' {
+  if (congestionIndex >= 0.76) return 'severe'
+  if (congestionIndex >= 0.51) return 'heavy'
+  if (congestionIndex >= 0.26) return 'moderate'
+  return 'clear'
+}
+
+function toTrafficAlerts(incidents: TrafficIncidentPayload[]): VisualizationAlert[] {
+  return incidents.map((incident) => ({
+    id: incident.id,
+    type: incident.type,
+    severity: incident.severity,
+    title: incident.title,
+    description: incident.description,
+    timestamp: new Date(incident.updatedAt).getTime(),
+    lat: incident.lat,
+    lng: incident.lng,
+    resolved: false,
+    realWorldEvidence: [
+      { source: incident.source, signal: 'roadClass', value: incident.roadClass, quality: incident.stale ? 0.45 : 0.9 },
+    ],
+  }))
 }
 
 function mergeFeedTimeline(
@@ -165,6 +304,13 @@ export default function Surveillance() {
   const [alertFeedClearedAt, setAlertFeedClearedAt] = useState<number>(0)
   const [telemetrySamples, setTelemetrySamples] = useState<TelemetrySample[]>([])
   const [wireframesVisible, setWireframesVisible] = useState(true)
+  const [trafficVisible, setTrafficVisible] = useState(true)
+  const [basemapMode, setBasemapMode] = useState<BasemapMode>('satellite')
+  const [trafficViewportBbox, setTrafficViewportBbox] = useState<string | null>(null)
+  const [trafficSegments, setTrafficSegments] = useState<VisualizationTrafficSegment[]>([])
+  const [trafficIncidentEvents, setTrafficIncidentEvents] = useState<VisualizationAlert[]>([])
+  const [trafficProvider, setTrafficProvider] = useState('synthetic')
+  const [trafficStale, setTrafficStale] = useState(false)
   const [audioStatus, setAudioStatus] = useState('AUDIO OFF')
   const [audioInputMode, setAudioInputMode] = useState<AudioInputMode>('auto')
   const [audioLevel, setAudioLevel] = useState(0)
@@ -277,7 +423,45 @@ export default function Surveillance() {
     radiusKm: entry.radiusKm,
   })), [geoRaw])
 
-  const activeEvents = fusedVisualizationEvents.length > 0 ? fusedVisualizationEvents : events
+  const curatedTrafficSegments = useMemo(() => curateTrafficSegments(trafficSegments, altitude, basemapMode), [altitude, basemapMode, trafficSegments])
+  const congestionOnTrafficMapOnly = basemapMode === 'traffic' && trafficVisible
+
+  const effectiveWireframesVisible = basemapMode === 'traffic' ? false : wireframesVisible
+
+  const activeTrafficCongestion = useMemo(() => {
+    if (curatedTrafficSegments.length === 0) return 0
+    return curatedTrafficSegments.reduce((sum, segment) => sum + segment.congestionIndex, 0) / curatedTrafficSegments.length
+  }, [curatedTrafficSegments])
+
+  const trafficSummary = useMemo(() => {
+    const byTone = curatedTrafficSegments.reduce<Record<'clear' | 'moderate' | 'heavy' | 'severe', number>>((acc, segment) => {
+      acc[congestionTone(segment.congestionIndex)] += 1
+      return acc
+    }, { clear: 0, moderate: 0, heavy: 0, severe: 0 })
+
+    const avgSpeed = curatedTrafficSegments.length > 0
+      ? Math.round(curatedTrafficSegments.reduce((sum, segment) => sum + segment.currentSpeedKph, 0) / curatedTrafficSegments.length)
+      : 0
+
+    return {
+      avgSpeed,
+      visibleRoads: curatedTrafficSegments.length,
+      byTone,
+      dominantTone: activeTrafficCongestion >= 0.76 ? 'Severe slowdown' : activeTrafficCongestion >= 0.51 ? 'Heavy congestion' : activeTrafficCongestion >= 0.26 ? 'Moderate congestion' : 'Mostly clear',
+    }
+  }, [activeTrafficCongestion, curatedTrafficSegments])
+
+  const upstreamEvents = fusedVisualizationEvents.length > 0 ? fusedVisualizationEvents : events
+  const activeEvents = useMemo(() => {
+    const deduped = new Map<string, VisualizationAlert>()
+    upstreamEvents.forEach((event) => {
+      deduped.set(event.id, event)
+    })
+    trafficIncidentEvents.forEach((event) => {
+      deduped.set(event.id, event)
+    })
+    return [...deduped.values()]
+  }, [trafficIncidentEvents, upstreamEvents])
   const mapEvents = activeEvents.filter((event) => {
     if (typeof event.lat !== 'number' || typeof event.lng !== 'number') return false
     return !(Math.abs(event.lat) < 0.01 && Math.abs(event.lng) < 0.01)
@@ -289,6 +473,8 @@ export default function Surveillance() {
   const visibleGeo = layerVisibility.geo ? geo : []
 
   const focusedNode = useMemo(() => visibleNodes.find((node) => node.id === focusedNodeId) ?? visibleNodes[0] ?? nodes[0] ?? FALLBACK_NODES[0], [focusedNodeId, nodes, visibleNodes])
+  const estimatedTrafficBbox = useMemo(() => estimateTrafficBounds({ lat: focusedNode.lat, lng: focusedNode.lng }, altitude), [altitude, focusedNode.lat, focusedNode.lng])
+  const trafficBbox = trafficViewportBbox ?? estimatedTrafficBbox
 
   const audioReactiveEnabled = audioStatus !== 'AUDIO OFF' && audioStatus !== 'REQUESTING...'
   const audioReactiveState = useMemo(() => ({ enabled: audioReactiveEnabled, level: audioLevel, bands: audioBands }), [audioReactiveEnabled, audioLevel, audioBands])
@@ -363,6 +549,14 @@ export default function Surveillance() {
   }, [setConnectionState])
 
   useEffect(() => {
+    if (!congestionOnTrafficMapOnly) {
+      setTrafficSegments([])
+      setTrafficIncidentEvents([])
+      setTrafficProvider('standby')
+      setTrafficStale(false)
+      return
+    }
+
     let cancelled = false
 
     const run = async () => {
@@ -391,6 +585,44 @@ export default function Surveillance() {
   }, [intervalMs, setFusedEvents])
 
   useEffect(() => {
+    let cancelled = false
+
+    const loadTraffic = async () => {
+      try {
+        const [flowResponse, incidentResponse] = await Promise.all([
+          fetch(`/api/v6/traffic/flow?bbox=${encodeURIComponent(trafficBbox)}`, { headers: { accept: 'application/json' } }),
+          fetch(`/api/v6/traffic/incidents?bbox=${encodeURIComponent(trafficBbox)}`, { headers: { accept: 'application/json' } }),
+        ])
+
+        const flowPayload = await flowResponse.json() as TrafficFlowResponse
+        const incidentPayload = await incidentResponse.json() as TrafficIncidentResponse
+        if (cancelled) return
+
+        setTrafficSegments(flowPayload.data?.segments ?? [])
+        setTrafficIncidentEvents(toTrafficAlerts(incidentPayload.data?.incidents ?? []))
+        setTrafficProvider(incidentPayload.data?.provider ?? flowPayload.data?.provider ?? 'synthetic')
+        setTrafficStale(Boolean(flowPayload.data?.stale || incidentPayload.data?.stale))
+      } catch {
+        if (cancelled) return
+        setTrafficSegments([])
+        setTrafficIncidentEvents([])
+        setTrafficProvider('offline')
+        setTrafficStale(true)
+      }
+    }
+
+    void loadTraffic()
+    const timer = window.setInterval(() => {
+      void loadTraffic()
+    }, TRAFFIC_REFRESH_MS)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [congestionOnTrafficMapOnly, trafficBbox])
+
+  useEffect(() => {
     const activeFeed = activeEvents
       .filter((event) => !event.resolved)
       .sort((left, right) => (right.timestamp ?? 0) - (left.timestamp ?? 0))
@@ -416,18 +648,18 @@ export default function Surveillance() {
 
   useEffect(() => {
     const weatherAlerts = activeEvents.filter((alert) => normalizeAlertCategory(alert.type) === 'weather').length
-    const trafficAlerts = activeEvents.filter((alert) => normalizeAlertCategory(alert.type) === 'traffic').length
+    const trafficAlerts = activeEvents.filter((alert) => normalizeAlertCategory(`${alert.type} ${alert.title} ${alert.description}`) === 'traffic').length
     const avgLoad = visibleNodes.reduce((sum, node) => sum + (node.loadPercent ?? 0), 0) / Math.max(1, visibleNodes.length)
 
     const liveSample: TelemetrySample = {
       timestamp: Date.now(),
       alerts: activeEvents.length,
-      traffic: Math.max(0, Math.min(1, (avgLoad / 100) * 0.76 + Math.min(trafficAlerts, 8) * 0.03)),
+      traffic: Math.max(0, Math.min(1, (avgLoad / 100) * 0.34 + (activeTrafficCongestion * 0.56) + Math.min(trafficAlerts, 8) * 0.03)),
       weather: Math.max(0, Math.min(1, (weatherAlerts / Math.max(activeEvents.length, 1)) * 0.9)),
     }
 
     setTelemetrySamples((current) => [...current.slice(-119), liveSample])
-  }, [activeEvents, visibleNodes])
+  }, [activeEvents, activeTrafficCongestion, visibleNodes])
 
   useEffect(() => {
     emitTelemetryEvent('scene:focus', { focusedNodeId: focusedNode.id })
@@ -611,7 +843,7 @@ export default function Surveillance() {
   }, { traffic: 0, weather: 0, wildfire: 0, police: 0, service: 0 }), [activeEvents])
 
   const stale = (Date.now() - (connection.lastSuccessAt ?? lastSync)) > STALE_THRESHOLD_MS
-  const mapSubtitle = 'v7 global intel layered over the v6 sovereign surveillance surface.'
+  const mapSubtitle = `v7 global intel layered over the v6 sovereign surveillance surface · ${basemapMode} basemap · congestion ${congestionOnTrafficMapOnly ? 'active' : 'standby'} · traffic ${trafficProvider}${trafficStale ? ' · stale' : ''} · ${trafficSummary.dominantTone.toLowerCase()}.`
 
   return (
     <div className="oct-screen space-y-3 md:space-y-4">
@@ -682,6 +914,50 @@ export default function Surveillance() {
                     {layer}
                   </button>
                 ))}
+                <div className="ml-2 flex items-center gap-2 rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                  <span>Basemap</span>
+                  <div className="flex items-center gap-1 rounded border border-[var(--border)] bg-[rgba(3,10,20,0.7)] p-1">
+                    <button
+                      type="button"
+                      onClick={() => setBasemapMode('satellite')}
+                      className={`rounded px-2 py-1 ${basemapMode === 'satellite' ? 'border border-[var(--accent)] bg-[rgba(0,245,255,0.1)] text-[var(--text)]' : 'text-[var(--muted)]'}`}
+                    >
+                      Satellite
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBasemapMode('traffic')
+                        setTrafficVisible(true)
+                      }}
+                      className={`rounded px-2 py-1 ${basemapMode === 'traffic' ? 'border border-[var(--accent)] bg-[rgba(0,245,255,0.1)] text-[var(--text)]' : 'text-[var(--muted)]'}`}
+                    >
+                      Traffic
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                  <span>Congestion</span>
+                  <div className="flex items-center gap-1 rounded border border-[var(--border)] bg-[rgba(3,10,20,0.7)] p-1">
+                    <button
+                      type="button"
+                      onClick={() => setTrafficVisible(false)}
+                      className={`rounded px-2 py-1 ${!trafficVisible ? 'border border-[var(--accent)] bg-[rgba(0,245,255,0.1)] text-[var(--text)]' : 'text-[var(--muted)]'}`}
+                    >
+                      Off
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTrafficVisible(true)
+                        if (basemapMode !== 'traffic') setBasemapMode('traffic')
+                      }}
+                      className={`rounded px-2 py-1 ${trafficVisible ? 'border border-[var(--accent)] bg-[rgba(0,245,255,0.1)] text-[var(--text)]' : 'text-[var(--muted)]'}`}
+                    >
+                      Live
+                    </button>
+                  </div>
+                </div>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 {(['health', 'flow', 'event'] as IntelFocusMode[]).map((mode) => (
@@ -702,6 +978,22 @@ export default function Surveillance() {
               </div>
             </div>
           </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[linear-gradient(180deg,rgba(8,21,39,0.92),rgba(4,12,24,0.88))] p-3 lg:col-span-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent)]">Traffic Signal</div>
+                <div className="mt-1 text-sm font-semibold text-[var(--text)]">{trafficSummary.dominantTone}</div>
+                <div className="mt-1 text-[11px] text-[var(--muted)]">{trafficSummary.visibleRoads} rendered roads · avg {trafficSummary.avgSpeed} kph · provider {trafficProvider}{trafficStale ? ' · stale fallback risk' : ''}</div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">
+                <span className="traffic-legend-chip traffic-legend-chip--clear">Clear {trafficSummary.byTone.clear}</span>
+                <span className="traffic-legend-chip traffic-legend-chip--moderate">Moderate {trafficSummary.byTone.moderate}</span>
+                <span className="traffic-legend-chip traffic-legend-chip--heavy">Heavy {trafficSummary.byTone.heavy}</span>
+                <span className="traffic-legend-chip traffic-legend-chip--severe">Severe {trafficSummary.byTone.severe}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </Panel>
 
@@ -714,10 +1006,14 @@ export default function Surveillance() {
                 focusedNodeId={focusedNode.id}
                 nodes={visibleNodes}
                 alerts={visibleEvents}
+                basemapMode={basemapMode}
+                onTrafficViewportChange={setTrafficViewportBbox}
+                trafficSegments={curatedTrafficSegments}
                 subsystems={visibleSubsystems}
                 geo={visibleGeo}
                 showFlows={layerVisibility.flows && flowsRaw.length > 0}
-                wireframesVisible={wireframesVisible}
+                showTraffic={congestionOnTrafficMapOnly}
+                wireframesVisible={effectiveWireframesVisible}
                 audioReactive={audioReactiveState}
                 edgeToEdge
               />
@@ -773,7 +1069,7 @@ export default function Surveillance() {
 
           <Panel title="Layer Metrics" subtitle="operator read in under 10 seconds">
             <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-              <MetricCard label="Traffic" value={liveCategoryCounts.traffic} accent="var(--accent)" sub="Flow pressure" />
+              <MetricCard label="Traffic" value={liveCategoryCounts.traffic} accent="var(--accent)" sub={`${Math.round(activeTrafficCongestion * 100)}% congestion · ${trafficSummary.visibleRoads} roads`} />
               <MetricCard label="Weather" value={liveCategoryCounts.weather} accent="var(--warn)" sub="Storm vectors" />
               <MetricCard label="Fire" value={liveCategoryCounts.wildfire} accent="#a855f7" sub="Perimeter events" />
               <MetricCard label="Police" value={liveCategoryCounts.police} accent="var(--red)" sub="Security alerts" />

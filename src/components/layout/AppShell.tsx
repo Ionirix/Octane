@@ -26,7 +26,7 @@ export function AppShell() {
             onClick={() => setNavOpen(false)}
           />
         )}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-2.5 md:p-3">
+        <main className="relative z-0 flex-1 overflow-y-auto overflow-x-hidden p-2.5 md:p-3">
           <Outlet />
         </main>
         {isLegacyRoute && <V5CommandDock />}

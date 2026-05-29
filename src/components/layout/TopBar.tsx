@@ -15,7 +15,7 @@ export function TopBar({ onMenuToggle }: TopBarProps) {
   const pct = Math.round(chaos * 100)
 
   return (
-    <header className="h-12 md:h-11 shrink-0 flex items-center justify-between px-2.5 md:px-4 border-b border-[var(--border)] bg-[var(--bg)] z-20">
+    <header className="relative z-[7100] h-12 md:h-11 shrink-0 flex items-center justify-between px-2.5 md:px-4 border-b border-[var(--border)] bg-[var(--bg)]">
       <div className="flex items-center gap-2 md:gap-3 min-w-0">
         <button
           onClick={onMenuToggle}

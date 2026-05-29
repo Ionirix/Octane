@@ -6,6 +6,7 @@ import type {
   VisualizationLayerPayload,
   VisualizationNode,
   VisualizationSubsystem,
+  VisualizationTrafficSegment,
 } from './types'
 
 type MapController = {
@@ -16,6 +17,8 @@ type MapController = {
     layers?: VisualizationLayerPayload,
   ) => void
   setAltitude: (altitude: number) => void
+  setBasemap: (mode: 'satellite' | 'traffic') => void
+  setViewportChangeHandler: (handler?: (bbox: string) => void) => void
   setAudioReactive: (enabled: boolean, level?: number, bands?: AudioReactiveBands) => void
   setWireframesVisible: (visible: boolean) => void
   projectLatLng: (lat: number, lng: number) => { x: number; y: number } | null
@@ -79,6 +82,12 @@ type AmbientAudioDot = {
   threshold: number
   color: string
   fillColor: string
+}
+
+type TrafficSegmentStyle = {
+  color: string
+  opacity: number
+  weight: number
 }
 
 type GlobalEventCategory = 'traffic' | 'weather' | 'wildfire' | 'police' | 'service'
@@ -420,26 +429,54 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     attributionControl: false,
     minZoom: config.minZoom,
     maxZoom: Math.max(config.maxZoom, 19),
+    preferCanvas: true,
     worldCopyJump: true,
   }).setView([20, 0], 2)
 
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  map.createPane('traffic-flow-pane')
+  const trafficPane = map.getPane('traffic-flow-pane')
+  if (trafficPane) {
+    trafficPane.style.zIndex = '470'
+  }
+
+  const trafficRenderer = L.canvas({ padding: 0.5, pane: 'traffic-flow-pane' })
+
+  const satelliteTiles = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 19,
     noWrap: false,
     className: 'surveillance-satellite-tiles',
   }).addTo(map)
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', {
+  const trafficBasemapTiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
+    maxZoom: 20,
+    subdomains: 'abcd',
+    opacity: 0,
+    className: 'surveillance-traffic-basemap',
+  }).addTo(map)
+
+  const streetLabels = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', {
     maxZoom: 20,
     subdomains: 'abcd',
     opacity: 0.86,
     className: 'surveillance-street-labels',
   }).addTo(map)
 
+  let basemapMode: 'satellite' | 'traffic' = 'satellite'
+
+  const setBasemap = (mode: 'satellite' | 'traffic') => {
+    basemapMode = mode
+    satelliteTiles.setOpacity(mode === 'traffic' ? 0 : 1)
+    trafficBasemapTiles.setOpacity(mode === 'traffic' ? 1 : 0)
+    streetLabels.setOpacity(mode === 'traffic' ? 0.94 : 0.86)
+  }
+
+  setBasemap('satellite')
+
   const gridLayer = L.layerGroup().addTo(map)
   const meshLayer = L.layerGroup().addTo(map)
   const reactiveMeshLayer = L.layerGroup().addTo(map)
   const ambientDotLayer = L.layerGroup().addTo(map)
+  const trafficLayer = L.layerGroup().addTo(map)
   const globalEventLayer = L.layerGroup().addTo(map)
   const subsystemLayer = L.layerGroup().addTo(map)
   const geoLayer = L.layerGroup().addTo(map)
@@ -1097,11 +1134,22 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
   let connections: Polyline[] = []
   let alertsRings: CircleMarker[] = []
   let latencyRings: CircleMarker[] = []
+  let trafficSegmentLines: Polyline[] = []
   let globalEventDots: CircleMarker[] = []
   let subsystemRings: CircleMarker[] = []
   let geoRings: Array<L.Circle> = []
   let hasInitialBounds = false
   let lastFocusedNodeId: string | undefined
+  let viewportChangeHandler: ((bbox: string) => void) | undefined
+
+  const formatViewportBbox = () => {
+    const bounds = map.getBounds()
+    return `${bounds.getWest().toFixed(4)},${bounds.getSouth().toFixed(4)},${bounds.getEast().toFixed(4)},${bounds.getNorth().toFixed(4)}`
+  }
+
+  const emitViewportChange = () => {
+    viewportChangeHandler?.(formatViewportBbox())
+  }
 
   const markUserNavigation = () => {
     hasInitialBounds = true
@@ -1110,6 +1158,8 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
   map.on('dragstart', markUserNavigation)
   map.on('zoomstart', markUserNavigation)
   map.on('zoomend', applyGlobalEventDotSizing)
+  map.on('moveend', emitViewportChange)
+  map.on('zoomend', emitViewportChange)
 
   const applyRouteDynamics = (line: Polyline, avgLatency: number, riskLevel: 'normal' | 'elevated' | 'critical') => {
     const element = line.getElement() as SVGPathElement | null
@@ -1127,6 +1177,27 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
           ? 'surveillance-route-line--elevated'
           : 'surveillance-route-line--normal',
     )
+  }
+
+  const trafficStyle = (segment: VisualizationTrafficSegment): TrafficSegmentStyle => {
+    const congestion = clamp01(segment.congestionIndex)
+    const trafficMode = basemapMode === 'traffic'
+    const color = congestion >= 0.76
+      ? '#d93025'
+      : congestion >= 0.51
+        ? '#ff8f00'
+        : congestion >= 0.26
+          ? '#fbbc04'
+          : '#34a853'
+    const baseWeight = trafficMode
+      ? (segment.roadClass === 'highway' ? 5.8 : segment.roadClass === 'arterial' ? 4.4 : 3.5)
+      : (segment.roadClass === 'highway' ? 4.8 : segment.roadClass === 'arterial' ? 3.6 : 2.8)
+    const stalePenalty = segment.stale ? (trafficMode ? 0.08 : 0.14) : 0
+    return {
+      color,
+      opacity: Math.max(trafficMode ? 0.82 : 0.5, (trafficMode ? 0.9 : 0.72) + (congestion * (trafficMode ? 0.08 : 0.2)) - stalePenalty),
+      weight: baseWeight,
+    }
   }
 
   const forceFullSize = () => {
@@ -1152,13 +1223,16 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
   ) => {
     forceFullSize()
     const showFlows = layers?.showFlows ?? true
+    const showTraffic = layers?.showTraffic ?? true
     const subsystems = layers?.subsystems ?? []
     const geo = layers?.geo ?? []
+    const trafficSegmentsPayload = layers?.trafficSegments ?? []
 
     markers.forEach((marker) => marker.remove())
     connections.forEach((line) => line.remove())
     alertsRings.forEach((marker) => marker.remove())
     latencyRings.forEach((ring) => ring.remove())
+    trafficSegmentLines.forEach((segment) => segment.remove())
     globalEventDots.forEach((dot) => dot.remove())
     subsystemRings.forEach((ring) => ring.remove())
     geoRings.forEach((ring) => ring.remove())
@@ -1166,6 +1240,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     connections = []
     alertsRings = []
     latencyRings = []
+    trafficSegmentLines = []
     globalEventDots = []
     subsystemRings = []
     geoRings = []
@@ -1302,6 +1377,40 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       })
     })
 
+    if (showTraffic) {
+      trafficSegmentsPayload.forEach((segment) => {
+        if (segment.polyline.length < 2) return
+        const style = trafficStyle(segment)
+        const trafficLine = L.polyline(segment.polyline, {
+          color: style.color,
+          opacity: style.opacity,
+          weight: style.weight,
+          pane: 'traffic-flow-pane',
+          lineCap: 'round',
+          lineJoin: 'round',
+          renderer: trafficRenderer,
+          smoothFactor: basemapMode === 'traffic' ? 0.6 : 1.1,
+          className: 'surveillance-traffic-segment surveillance-traffic-segment--flow',
+        }).addTo(trafficLayer)
+
+        if (segment.roadClass !== 'collector' || segment.congestionIndex >= 0.45) {
+          trafficLine.bindTooltip(
+            `<strong>${segment.roadClass.toUpperCase()} traffic</strong><br/>`
+            + `<span>${Math.round(segment.currentSpeedKph)} kph current · ${Math.round(segment.freeFlowSpeedKph)} kph free-flow</span><br/>`
+            + `<span>${Math.round(segment.congestionIndex * 100)}% congestion · confidence ${Math.round(segment.confidence * 100)}%</span><br/>`
+            + `<span>Source: ${segment.source}${segment.stale ? ' · stale' : ''}</span>`,
+            {
+              direction: 'top',
+              opacity: 0.92,
+              sticky: true,
+            },
+          )
+        }
+
+        trafficSegmentLines.push(trafficLine)
+      })
+    }
+
     for (const alert of alerts) {
       const node = alert.serverId ? nodeById.get(alert.serverId) : undefined
       const category = normalizeAlertCategoryFromAlert(alert)
@@ -1429,6 +1538,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     if (!hasInitialBounds) {
       map.fitBounds(WORLD_BOUNDS, { padding: [8, 8], animate: true, duration: 0.6 })
       hasInitialBounds = true
+      emitViewportChange()
     }
 
     const focusedNode = focusedNodeId ? nodeById.get(focusedNodeId) : undefined
@@ -1436,6 +1546,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       map.panTo([focusedNode.lat, focusedNode.lng], { animate: true, duration: 0.7 })
       lastFocusedNodeId = focusedNodeId
       hasInitialBounds = true
+      emitViewportChange()
     }
 
     if (!focusedNodeId) {
@@ -1453,6 +1564,11 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
   return {
     setData,
     setAltitude,
+    setBasemap,
+    setViewportChangeHandler: (handler?: (bbox: string) => void) => {
+      viewportChangeHandler = handler
+      if (handler) emitViewportChange()
+    },
     setAudioReactive: (enabled: boolean, level = 0, bands?: AudioReactiveBands) => {
       audioReactiveEnabled = enabled
       audioReactiveLevel = clamp01(level)
@@ -1496,6 +1612,8 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       map.off('dragstart', markUserNavigation)
       map.off('zoomstart', markUserNavigation)
       map.off('zoomend', applyGlobalEventDotSizing)
+      map.off('moveend', emitViewportChange)
+      map.off('zoomend', emitViewportChange)
       resizeObserver.disconnect()
       map.remove()
     },

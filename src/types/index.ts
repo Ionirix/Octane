@@ -469,6 +469,7 @@ export interface Env {
   OPERATOR:             string;
   ISSUE_DATE:           string;
   CLASSIFICATION:       string;
+  HERE_TRAFFIC_API_KEY?: string;
 }
 
 export interface OctaneEnv {

@@ -66,9 +66,11 @@ export function SideNav({ mobileOpen = false, onNavigate }: SideNavProps) {
   return (
     <nav
       className={clsx(
-        'w-[190px] md:w-[190px] shrink-0 flex flex-col border-r border-[var(--border)] bg-[var(--bg)] overflow-y-auto',
-        'fixed md:static inset-y-0 left-0 z-[5000] md:z-auto transition-transform duration-200 ease-out',
-        mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+        'relative z-[7000] md:w-[190px] md:shrink-0 md:flex md:flex-col border-r border-[var(--border)] bg-[var(--bg)] overflow-y-auto',
+        'fixed md:relative inset-y-0 left-0 transition-transform duration-200 ease-out',
+        mobileOpen
+          ? 'w-[190px] translate-x-0 pointer-events-auto flex flex-col'
+          : 'w-0 -translate-x-full pointer-events-none md:w-[190px] md:translate-x-0 md:pointer-events-auto md:flex',
       )}
     >
       {NAV_GROUPS.map(group => (
