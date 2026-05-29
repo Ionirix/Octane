@@ -1,7 +1,8 @@
-import type { WeatherEnvLayerType } from '@/modules/weather/types'
+import type { WeatherEnvLayerType, WeatherLayerType } from '@/modules/weather/types'
 
 type LayerControlPanelProps = {
   activeLayers: {
+    radar: boolean
     storms: boolean
     precipitation: boolean
     wind: boolean
@@ -13,6 +14,7 @@ type LayerControlPanelProps = {
     lightningTracking: boolean
   }
   layerOpacity: {
+    radar: number
     precipitation: number
     wind: number
     pressure: number
@@ -22,8 +24,8 @@ type LayerControlPanelProps = {
     hurricaneRainRadar: number
     lightningTracking: number
   }
-  onToggleLayer: (layer: 'storms' | WeatherEnvLayerType) => void
-  onOpacityChange: (layer: WeatherEnvLayerType, opacity: number) => void
+  onToggleLayer: (layer: WeatherLayerType) => void
+  onOpacityChange: (layer: 'radar' | WeatherEnvLayerType, opacity: number) => void
 }
 
 const ENV_TYPES: WeatherEnvLayerType[] = [
@@ -49,6 +51,21 @@ export function LayerControlPanel({ activeLayers, layerOpacity, onToggleLayer, o
   return (
     <div className="weather-layer-panel">
       <div className="weather-layer-panel__title">Layer Controls</div>
+      <button type="button" onClick={() => onToggleLayer('radar')} className="weather-control-btn w-full text-left">
+        {activeLayers.radar ? 'Hide Radar' : 'Show Radar'}
+      </button>
+      <label className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.1em] text-[var(--muted)]">
+        Opacity
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={Math.round(layerOpacity.radar * 100)}
+          onChange={(event) => onOpacityChange('radar', Number(event.target.value) / 100)}
+          className="w-24 accent-[var(--accent)]"
+        />
+      </label>
+
       <button type="button" onClick={() => onToggleLayer('storms')} className="weather-control-btn w-full text-left">
         {activeLayers.storms ? 'Hide Storm Cells' : 'Show Storm Cells'}
       </button>

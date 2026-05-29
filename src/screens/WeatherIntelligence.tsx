@@ -532,6 +532,7 @@ export default function WeatherIntelligence() {
           <div className="flex flex-col gap-3">
             <LayerControlPanel
               activeLayers={{
+                  radar: activeLayers.radar,
                 storms: activeLayers.storms,
                 precipitation: activeLayers.precipitation,
                 wind: activeLayers.wind,
@@ -543,6 +544,7 @@ export default function WeatherIntelligence() {
                 lightningTracking: activeLayers.lightningTracking,
               }}
               layerOpacity={{
+                  radar: layerOpacity.radar,
                 precipitation: layerOpacity.precipitation,
                 wind: layerOpacity.wind,
                 pressure: layerOpacity.pressure,

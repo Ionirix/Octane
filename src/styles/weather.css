@@ -41,6 +41,8 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   backdrop-filter: blur(2px);
+  pointer-events: none;
+  z-index: 510;
 }
 
 .weather-radar-chip__title {

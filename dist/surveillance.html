@@ -93,6 +93,50 @@
     .map-dot, .world-dot { position: absolute; border-radius: 999px; }
     .map-dot { background: rgba(255,255,255,.92); box-shadow: 0 0 8px rgba(180,240,255,.85); }
     .world-dot { background: rgba(255,255,255,.95); box-shadow: 0 0 12px rgba(180,240,255,.85); }
+    .health-dot {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      border-radius: 999px;
+      border: 1px solid rgba(0,255,170,0.85);
+      background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.95), rgba(0,255,170,0.55));
+      box-shadow: 0 0 12px rgba(0,255,170,0.85), 0 0 28px rgba(0,255,170,0.4);
+      z-index: 3;
+      animation: pulse-heal 1.6s ease-in-out infinite;
+    }
+    .health-dot.town { width: 7px; height: 7px; }
+    .health-dot.city { width: 9px; height: 9px; }
+    .health-dot.metropolis { width: 12px; height: 12px; }
+    .health-label {
+      position: absolute;
+      transform: translate(-50%, -140%);
+      border: 1px solid rgba(0,255,170,0.3);
+      background: rgba(2,26,20,0.78);
+      color: rgba(204,255,236,0.95);
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 9px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      z-index: 4;
+      white-space: nowrap;
+    }
+    .tier-badge {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid rgba(0,255,170,0.35);
+      background: rgba(0,255,170,0.14);
+      color: rgba(180,255,230,0.98);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 10px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      margin-right: 6px;
+    }
+    @keyframes pulse-heal {
+      0%, 100% { opacity: 0.76; transform: translate(-50%, -50%) scale(1); }
+      50% { opacity: 1; transform: translate(-50%, -50%) scale(1.18); }
+    }
     .alert-badge { position: absolute; transform: translate(-50%, -50%); border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.12); color: rgba(255,255,255,.96); padding: 4px 8px; border-radius: 999px; font-size: 9px; letter-spacing: .14em; text-transform: uppercase; }
 
     .right-stack { display: grid; gap: 16px; }
@@ -132,7 +176,7 @@
       <div class="metric"><div class="label">Total Nodes</div><div class="value" id="totalNodes">14</div></div>
       <div class="metric"><div class="label">Active Alerts</div><div class="value" id="activeAlerts">3</div></div>
       <div class="metric"><div class="label">Global Latency</div><div class="value" id="globalLatency">62</div></div>
-      <div class="metric"><div class="label">Requests / Min</div><div class="value" id="rpm">534531</div></div>
+      <div class="metric"><div class="label">Active Health Nodes</div><div class="value" id="activeHealthNodes">9</div></div>
     </div>
 
     <div class="layout">
@@ -195,8 +239,13 @@
         </div>
 
         <div class="side-card pad">
+          <div class="badge">Active self-healing health nodes</div>
+          <div class="list" id="healthNodes" style="max-height:240px; margin-top:12px;"></div>
+        </div>
+
+        <div class="side-card pad">
           <div class="badge">Operational notes</div>
-          <p id="note" style="margin-top:12px;">Two planetary map models, live closures, transit disruptions, and country-level server presence.</p>
+          <p id="note" style="margin-top:12px;">Two planetary map models, live closures, and rotating self-healing health nodes that repair internet pathways in their local service radius.</p>
           <div class="footer-note" style="margin-top:8px;">If the API is reachable, this page refreshes itself with live surveillance data. Otherwise it falls back to the bundled command snapshot.</div>
         </div>
       </div>
@@ -243,10 +292,82 @@
       'United Kingdom': { lat: 55.3781, lng: -3.436 },
     };
 
+    const healthNodeLocations = [
+      { name: 'Reykjavik', country: 'Iceland', tier: 'town', lat: 64.1466, lng: -21.9426, repairRadiusKm: 220 },
+      { name: 'Bergen', country: 'Norway', tier: 'town', lat: 60.3913, lng: 5.3221, repairRadiusKm: 260 },
+      { name: 'Curitiba', country: 'Brazil', tier: 'town', lat: -25.4290, lng: -49.2671, repairRadiusKm: 300 },
+      { name: 'Port Louis', country: 'Mauritius', tier: 'town', lat: -20.1609, lng: 57.5012, repairRadiusKm: 180 },
+      { name: 'Anchorage', country: 'United States', tier: 'city', lat: 61.2181, lng: -149.9003, repairRadiusKm: 520 },
+      { name: 'Toronto', country: 'Canada', tier: 'city', lat: 43.6532, lng: -79.3832, repairRadiusKm: 680 },
+      { name: 'Madrid', country: 'Spain', tier: 'city', lat: 40.4168, lng: -3.7038, repairRadiusKm: 710 },
+      { name: 'Nairobi', country: 'Kenya', tier: 'city', lat: -1.2921, lng: 36.8219, repairRadiusKm: 640 },
+      { name: 'Lima', country: 'Peru', tier: 'city', lat: -12.0464, lng: -77.0428, repairRadiusKm: 690 },
+      { name: 'Auckland', country: 'New Zealand', tier: 'city', lat: -36.8485, lng: 174.7633, repairRadiusKm: 670 },
+      { name: 'New York', country: 'United States', tier: 'metropolis', lat: 40.7128, lng: -74.0060, repairRadiusKm: 1200 },
+      { name: 'Los Angeles', country: 'United States', tier: 'metropolis', lat: 34.0522, lng: -118.2437, repairRadiusKm: 1180 },
+      { name: 'Mexico City', country: 'Mexico', tier: 'metropolis', lat: 19.4326, lng: -99.1332, repairRadiusKm: 1050 },
+      { name: 'Sao Paulo', country: 'Brazil', tier: 'metropolis', lat: -23.5558, lng: -46.6396, repairRadiusKm: 1220 },
+      { name: 'London', country: 'United Kingdom', tier: 'metropolis', lat: 51.5074, lng: -0.1278, repairRadiusKm: 1140 },
+      { name: 'Paris', country: 'France', tier: 'metropolis', lat: 48.8566, lng: 2.3522, repairRadiusKm: 1160 },
+      { name: 'Lagos', country: 'Nigeria', tier: 'metropolis', lat: 6.5244, lng: 3.3792, repairRadiusKm: 1040 },
+      { name: 'Cairo', country: 'Egypt', tier: 'metropolis', lat: 30.0444, lng: 31.2357, repairRadiusKm: 1010 },
+      { name: 'Mumbai', country: 'India', tier: 'metropolis', lat: 19.0760, lng: 72.8777, repairRadiusKm: 1240 },
+      { name: 'Delhi', country: 'India', tier: 'metropolis', lat: 28.6139, lng: 77.2090, repairRadiusKm: 1260 },
+      { name: 'Bangkok', country: 'Thailand', tier: 'metropolis', lat: 13.7563, lng: 100.5018, repairRadiusKm: 1090 },
+      { name: 'Tokyo', country: 'Japan', tier: 'metropolis', lat: 35.6762, lng: 139.6503, repairRadiusKm: 1280 },
+      { name: 'Seoul', country: 'South Korea', tier: 'metropolis', lat: 37.5665, lng: 126.9780, repairRadiusKm: 1100 },
+      { name: 'Shanghai', country: 'China', tier: 'metropolis', lat: 31.2304, lng: 121.4737, repairRadiusKm: 1270 },
+      { name: 'Jakarta', country: 'Indonesia', tier: 'metropolis', lat: -6.2088, lng: 106.8456, repairRadiusKm: 1110 },
+      { name: 'Sydney', country: 'Australia', tier: 'metropolis', lat: -33.8688, lng: 151.2093, repairRadiusKm: 1190 },
+    ];
+
+    const tierWeights = { town: 2, city: 3, metropolis: 4 };
+    const tierOrder = ['metropolis', 'city', 'town'];
+    const activeHealthNodeCount = 9;
+    const healthCycleMs = 14000;
+    let currentNodes = fallbackNodes;
+    let currentAlerts = fallbackAlerts;
+
     const escape = (value) => String(value).replace(/[&<>"]+/g, (ch) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[ch] || ch));
     const latLngToSvg = (lat, lng) => ({ x: ((lng + 180) / 360) * 100, y: ((90 - lat) / 180) * 100 });
 
+    function getActiveHealthNodes(at = Date.now()) {
+      const cycle = Math.floor(at / healthCycleMs);
+      const ordered = [...healthNodeLocations].sort((a, b) => {
+        if (tierWeights[b.tier] !== tierWeights[a.tier]) {
+          return tierWeights[b.tier] - tierWeights[a.tier];
+        }
+        return a.name.localeCompare(b.name);
+      });
+
+      const active = [];
+      const starts = {
+        metropolis: cycle % ordered.filter((node) => node.tier === 'metropolis').length,
+        city: (cycle * 2) % ordered.filter((node) => node.tier === 'city').length,
+        town: (cycle * 3) % ordered.filter((node) => node.tier === 'town').length,
+      };
+      const perTier = { metropolis: 4, city: 3, town: 2 };
+
+      tierOrder.forEach((tier) => {
+        const pool = ordered.filter((node) => node.tier === tier);
+        for (let i = 0; i < perTier[tier]; i += 1) {
+          const node = pool[(starts[tier] + i) % pool.length];
+          active.push({
+            ...node,
+            activeSince: new Date(at - ((cycle % 5) * 1000 * 20)).toISOString(),
+            mission: 'SELF-HEALING INTERNET REPAIR',
+          });
+        }
+      });
+
+      return active.slice(0, activeHealthNodeCount);
+    }
+
     function render(nodes, alerts) {
+      currentNodes = nodes;
+      currentAlerts = alerts;
+      const activeHealthNodes = getActiveHealthNodes();
+
       document.getElementById('feed').innerHTML = alerts.map(alert => `
         <div class="item">
           <div class="title">${escape(alert.title)}</div>
@@ -261,14 +382,21 @@
         </div>
       `).join('');
 
+      document.getElementById('healthNodes').innerHTML = activeHealthNodes.map(node => `
+        <div class="item">
+          <div class="title"><span class="tier-badge">${escape(node.tier)}</span>${escape(node.name)}, ${escape(node.country)}</div>
+          <div class="meta">${escape(node.mission)} · Repair radius ${escape(node.repairRadiusKm)}km · Active ${escape(new Date(node.activeSince).toLocaleTimeString('en', { hour12: false }))}</div>
+        </div>
+      `).join('');
+
       document.getElementById('totalNodes').textContent = nodes.length;
       document.getElementById('activeAlerts').textContent = alerts.length;
       document.getElementById('globalLatency').textContent = Math.round(nodes.reduce((sum, node) => sum + node.latencyMs, 0) / nodes.length);
-      document.getElementById('rpm').textContent = nodes.reduce((sum, node) => sum + (node.requestsPerMin || 0), 0) || 534531;
-      document.getElementById('note').textContent = `Updated ${new Date().toLocaleTimeString('en', { hour12: false })}. Earth-scale transit, street detail, and country-level server markers stay in sync.`;
+      document.getElementById('activeHealthNodes').textContent = activeHealthNodes.length;
+      document.getElementById('note').textContent = `Updated ${new Date().toLocaleTimeString('en', { hour12: false })}. Active town, city, and metropolis health nodes are rotating globally and repairing internet network pathways in each local service radius.`;
       document.getElementById('signature').textContent = `Operator Signature: Mirnes / ${new Date().toISOString()}`;
 
-      placeMarkers(nodes, alerts);
+      placeMarkers(nodes, alerts, activeHealthNodes);
     }
 
     async function refresh() {
@@ -285,10 +413,10 @@
       }
     }
 
-    function placeMarkers(nodes, alerts) {
+    function placeMarkers(nodes, alerts, activeHealthNodes = []) {
       const globe = document.querySelector('.globe');
       const flatMap = document.querySelector('.flat-map');
-      document.querySelectorAll('.world-dot, .map-dot, .alert-badge').forEach((el) => el.remove());
+      document.querySelectorAll('.world-dot, .map-dot, .alert-badge, .health-dot, .health-label').forEach((el) => el.remove());
 
       nodes.forEach((node) => {
         const center = countryCenters[node.country] || { lat: 0, lng: 0 };
@@ -327,10 +455,36 @@
         badge.style.zIndex = '3';
         flatMap.appendChild(badge);
       });
+
+      activeHealthNodes.forEach((node) => {
+        const point = latLngToSvg(node.lat, node.lng);
+
+        const globeHealthDot = document.createElement('div');
+        globeHealthDot.className = `health-dot ${node.tier}`;
+        globeHealthDot.style.left = `${point.x}%`;
+        globeHealthDot.style.top = `${point.y}%`;
+        globe.appendChild(globeHealthDot);
+
+        const mapHealthDot = document.createElement('div');
+        mapHealthDot.className = `health-dot ${node.tier}`;
+        mapHealthDot.style.left = `${point.x}%`;
+        mapHealthDot.style.top = `${point.y}%`;
+        flatMap.appendChild(mapHealthDot);
+
+        if (node.tier === 'metropolis') {
+          const label = document.createElement('div');
+          label.className = 'health-label';
+          label.textContent = `${node.name} heal`;
+          label.style.left = `${point.x}%`;
+          label.style.top = `${point.y}%`;
+          flatMap.appendChild(label);
+        }
+      });
     }
 
     refresh();
-    placeMarkers(fallbackNodes, fallbackAlerts);
+    placeMarkers(currentNodes, currentAlerts, getActiveHealthNodes());
+    setInterval(() => placeMarkers(currentNodes, currentAlerts, getActiveHealthNodes()), healthCycleMs);
     setInterval(refresh, 30000);
   </script>
 </body>

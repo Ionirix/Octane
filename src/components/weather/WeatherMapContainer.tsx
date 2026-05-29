@@ -179,6 +179,16 @@ function downsampleVectorPoints(
   return sampled
 }
 
+function buildRadarLayerSignature(frame?: WeatherRadarFrame): string | null {
+  if (!frame) return null
+
+  return [
+    frame.timestamp,
+    frame.tileUrlTemplate,
+    frame.attribution ?? '',
+  ].join('|')
+}
+
 function buildCloudRasterDataUrl(
   points: Array<{ lat: number; lng: number; value: number; directionDeg?: number }>,
   bounds: { west: number; south: number; east: number; north: number },
@@ -372,6 +382,7 @@ export function WeatherMapContainer({
   const envTileLayerRefs = useRef<Partial<Record<WeatherEnvLayerType, TileLayer>>>({})
   const envImageLayerRefs = useRef<Partial<Record<WeatherEnvLayerType, ImageOverlay>>>({})
   const envLayerSignatureRefs = useRef<Partial<Record<WeatherEnvLayerType, string>>>({})
+  const radarLayerSignatureRef = useRef<string | null>(null)
   const isZoomingRef = useRef(false)
   const isPanningRef = useRef(false)
   const lastMapEventViewRef = useRef<{ center: [number, number]; zoom: number } | null>(null)
@@ -525,6 +536,7 @@ export function WeatherMapContainer({
       Object.values(envImageLayerRefs.current).forEach((layer) => layer?.remove())
       envImageLayerRefs.current = {}
       envLayerSignatureRefs.current = {}
+      radarLayerSignatureRef.current = null
       Object.values(envLayerRefs.current).forEach((layer) => layer?.remove())
       envLayerRefs.current = {}
       if (hoverTimerRef.current) {
@@ -602,10 +614,24 @@ export function WeatherMapContainer({
     const leaflet = leafletRef.current
     if (!map || !leaflet) return
 
+    const nextSignature = radarVisible ? buildRadarLayerSignature(frame) : null
+
+    if (!nextSignature || !frame?.tileUrlTemplate) {
+      radarLayerRef.current?.remove()
+      radarLayerRef.current = null
+      radarLayerSignatureRef.current = null
+      return
+    }
+
+    if (radarLayerRef.current && radarLayerSignatureRef.current === nextSignature) {
+      radarLayerRef.current.setOpacity(radarOpacity)
+      return
+    }
+
     radarLayerRef.current?.remove()
     radarLayerRef.current = null
 
-    if (!radarVisible || !frame) return
+    radarLayerSignatureRef.current = nextSignature
 
     radarLayerRef.current = leaflet.tileLayer(frame.tileUrlTemplate, {
       opacity: radarOpacity,
@@ -613,8 +639,10 @@ export function WeatherMapContainer({
       attribution: frame.attribution ?? 'Weather radar',
       zIndex: 450,
       pane: 'weatherRadarPane',
-      maxNativeZoom: 6,
+      tileSize: 256,
+      maxNativeZoom: 7,
       minNativeZoom: 0,
+      noWrap: true,
       updateWhenZooming: true,
       updateWhenIdle: true,
       keepBuffer: 4,

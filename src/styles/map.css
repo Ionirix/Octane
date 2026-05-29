@@ -294,6 +294,75 @@
   position: absolute;
 }
 
+.surveillance-health-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+}
+
+.surveillance-health-node__dot {
+  border-radius: 999px;
+  border: 1px solid rgba(53, 240, 161, 0.88);
+  background: radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.95), rgba(53, 240, 161, 0.45));
+  box-shadow: 0 0 12px rgba(53, 240, 161, 0.82), 0 0 22px rgba(53, 240, 161, 0.45);
+}
+
+.surveillance-health-node__pulse {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 999px;
+  border: 1px solid rgba(53, 240, 161, 0.6);
+  transform: translate(-50%, -50%);
+  animation: surveillance-health-pulse 1.6s ease-in-out infinite;
+}
+
+.surveillance-health-node--town .surveillance-health-node__dot {
+  width: 8px;
+  height: 8px;
+}
+
+.surveillance-health-node--town .surveillance-health-node__pulse {
+  width: 18px;
+  height: 18px;
+}
+
+.surveillance-health-node--city .surveillance-health-node__dot {
+  width: 10px;
+  height: 10px;
+}
+
+.surveillance-health-node--city .surveillance-health-node__pulse {
+  width: 24px;
+  height: 24px;
+}
+
+.surveillance-health-node--metropolis .surveillance-health-node__dot {
+  width: 12px;
+  height: 12px;
+}
+
+.surveillance-health-node--metropolis .surveillance-health-node__pulse {
+  width: 30px;
+  height: 30px;
+}
+
+.surveillance-health-node__label {
+  position: absolute;
+  left: 50%;
+  top: -10px;
+  transform: translate(-50%, -100%);
+  border: 1px solid rgba(53, 240, 161, 0.36);
+  border-radius: 999px;
+  background: rgba(5, 34, 24, 0.84);
+  color: rgba(191, 255, 232, 0.96);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
 .surveillance-target-lock--resolved {
   z-index: 2;
 }
@@ -309,7 +378,7 @@
   box-shadow:
     0 0 16px color-mix(in srgb, var(--target-color) 62%, transparent),
     inset 0 0 13px color-mix(in srgb, var(--target-color) 36%, transparent);
-  transform: rotate(var(--target-angle));
+  transform: rotate(var(--target-angle)) scale(var(--target-scale, 1));
   opacity: 0.86;
 }
 
@@ -582,6 +651,17 @@
 @keyframes surveillance-target-inner-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+@keyframes surveillance-health-pulse {
+  0%, 100% {
+    opacity: 0.26;
+    transform: translate(-50%, -50%) scale(0.86);
+  }
+  50% {
+    opacity: 0.72;
+    transform: translate(-50%, -50%) scale(1.16);
+  }
 }
 
 @media (max-width: 768px) {

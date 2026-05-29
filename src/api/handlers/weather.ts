@@ -45,6 +45,33 @@ type ViewportBounds = {
   north: number
 }
 
+type NwsAlertGeometry = {
+  type?: string
+  coordinates?: unknown
+}
+
+type NwsAlertFeature = {
+  id?: string
+  geometry?: NwsAlertGeometry | null
+  properties?: {
+    event?: string
+    headline?: string
+    description?: string
+    areaDesc?: string
+    sent?: string
+    effective?: string
+    expires?: string
+    ends?: string | null
+    senderName?: string
+    severity?: string
+    urgency?: string
+    certainty?: string
+    parameters?: {
+      eventMotionDescription?: string[]
+    }
+  }
+}
+
 function parseStepMinutes(raw?: string): number {
   const parsed = Number(raw ?? '5');
   if (!Number.isFinite(parsed) || parsed <= 0) return 5;
@@ -179,12 +206,6 @@ function getTimeJitter(timeIso: string): number {
   return Number.isFinite(seconds) ? seconds : Math.floor(Date.now() / 1000)
 }
 
-function shiftPoint(lat: number, lng: number, jitter: number, latFactor: number, lngFactor: number): [number, number] {
-  const latShift = Math.sin((jitter / 420) + latFactor) * 0.35
-  const lngShift = Math.cos((jitter / 520) + lngFactor) * 0.45
-  return [Number((lat + latShift).toFixed(4)), Number((lng + lngShift).toFixed(4))]
-}
-
 function parseBbox(raw?: string): ViewportBounds | undefined {
   if (!raw) return undefined
   const parts = raw.split(',').map((part) => Number(part.trim()))
@@ -204,6 +225,216 @@ function parseBbox(raw?: string): ViewportBounds | undefined {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
+}
+
+function parseGeometryRings(geometry: NwsAlertGeometry | null | undefined): Array<Array<[number, number]>> {
+  if (!geometry || !Array.isArray(geometry.coordinates)) return []
+
+  if (geometry.type === 'Polygon') {
+    return geometry.coordinates
+      .filter((ring): ring is Array<[number, number]> => Array.isArray(ring))
+      .map((ring) => ring
+        .filter((point): point is [number, number] => Array.isArray(point) && point.length >= 2 && Number.isFinite(point[0]) && Number.isFinite(point[1]))
+        .map(([lng, lat]) => [Number(lat), Number(lng)] as [number, number]))
+      .filter((ring) => ring.length >= 3)
+  }
+
+  if (geometry.type === 'MultiPolygon') {
+    return geometry.coordinates
+      .filter((polygon): polygon is Array<Array<[number, number]>> => Array.isArray(polygon))
+      .flatMap((polygon) => parseGeometryRings({ type: 'Polygon', coordinates: polygon }))
+  }
+
+  return []
+}
+
+function ringArea(ring: Array<[number, number]>): number {
+  if (ring.length < 3) return 0
+
+  let sum = 0
+  for (let index = 0; index < ring.length; index += 1) {
+    const [latA, lngA] = ring[index]
+    const [latB, lngB] = ring[(index + 1) % ring.length]
+    sum += (lngA * latB) - (lngB * latA)
+  }
+
+  return Math.abs(sum) / 2
+}
+
+function ringCentroid(ring: Array<[number, number]>): [number, number] {
+  if (ring.length === 0) return [0, 0]
+
+  const total = ring.reduce((acc, point) => ({ lat: acc.lat + point[0], lng: acc.lng + point[1] }), { lat: 0, lng: 0 })
+  return [Number((total.lat / ring.length).toFixed(4)), Number((total.lng / ring.length).toFixed(4))]
+}
+
+function boundsIntersectsRing(bounds: ViewportBounds, ring: Array<[number, number]>): boolean {
+  if (ring.length === 0) return false
+
+  const ringBounds = ring.reduce((acc, [lat, lng]) => ({
+    west: Math.min(acc.west, lng),
+    south: Math.min(acc.south, lat),
+    east: Math.max(acc.east, lng),
+    north: Math.max(acc.north, lat),
+  }), {
+    west: Number.POSITIVE_INFINITY,
+    south: Number.POSITIVE_INFINITY,
+    east: Number.NEGATIVE_INFINITY,
+    north: Number.NEGATIVE_INFINITY,
+  })
+
+  return !(ringBounds.east < bounds.west
+    || ringBounds.west > bounds.east
+    || ringBounds.north < bounds.south
+    || ringBounds.south > bounds.north)
+}
+
+function ringIntersectsBounds(bounds: ViewportBounds, ring: Array<[number, number]>): boolean {
+  if (ring.length === 0) return false
+
+  if (ring.some(([lat, lng]) => lat >= bounds.south && lat <= bounds.north && lng >= bounds.west && lng <= bounds.east)) {
+    return true
+  }
+
+  return boundsIntersectsRing(bounds, ring)
+}
+
+function extractMotionValue(value: string | undefined): { directionDeg?: number; speedKts?: number } | null {
+  if (!value) return null
+
+  const stormMatch = value.match(/\.{3}(\d{3})DEG\.{3}(\d+(?:\.\d+)?)KT/i)
+  if (stormMatch) {
+    return {
+      directionDeg: Number(stormMatch[1]),
+      speedKts: Number(stormMatch[2]),
+    }
+  }
+
+  const wordsToDegrees: Record<string, number> = {
+    north: 0,
+    northeast: 45,
+    east: 90,
+    southeast: 135,
+    south: 180,
+    southwest: 225,
+    west: 270,
+    northwest: 315,
+  }
+
+  const naturalMatch = value.match(/moving\s+([a-z-]+)\s+at\s+(\d+(?:\.\d+)?)\s*(mph|kt)/i)
+  if (naturalMatch) {
+    const directionWord = naturalMatch[1].toLowerCase().replace(/-/g, '')
+    const directionDeg = wordsToDegrees[directionWord]
+    const rawSpeed = Number(naturalMatch[2])
+    const speedKts = naturalMatch[3].toLowerCase() === 'mph' ? rawSpeed * 0.868976 : rawSpeed
+    return {
+      directionDeg,
+      speedKts: Number(speedKts.toFixed(2)),
+    }
+  }
+
+  return null
+}
+
+function classifyAlertEvent(event?: string, headline?: string, description?: string): 'hurricane' | 'storm' | null {
+  const text = [event, headline, description].filter(Boolean).join(' ')
+  if (/hurricane|tropical storm|tropical cyclone/i.test(text)) return 'hurricane'
+  if (/tornado|severe thunderstorm|thunderstorm|flash flood|flood warning|flood advisory|flood watch|special weather statement|severe weather/i.test(text)) {
+    return 'storm'
+  }
+  return null
+}
+
+async function fetchActiveStormAlerts(): Promise<NwsAlertFeature[]> {
+  try {
+    const response = await fetch('https://api.weather.gov/alerts/active?status=actual', {
+      headers: {
+        Accept: 'application/geo+json',
+        'User-Agent': 'Octane Weather Intelligence (https://github.com/Slizz/Octane)',
+      },
+    })
+    if (!response.ok) return []
+
+    const payload = await response.json() as { features?: NwsAlertFeature[] }
+    if (!Array.isArray(payload.features)) return []
+    return payload.features
+  } catch {
+    return []
+  }
+}
+
+function alertToStormCell(feature: NwsAlertFeature, bounds?: ViewportBounds, index = 0): StormCell | null {
+  const geometryRings = parseGeometryRings(feature.geometry)
+  if (geometryRings.length === 0) return null
+
+  const candidateRing = geometryRings
+    .sort((left, right) => ringArea(right) - ringArea(left))[0]
+
+  if (!candidateRing || candidateRing.length < 3) return null
+  if (bounds && !ringIntersectsBounds(bounds, candidateRing)) return null
+
+  const classification = classifyAlertEvent(feature.properties?.event, feature.properties?.headline, feature.properties?.description)
+  if (!classification) return null
+
+  const motionDescription = feature.properties?.parameters?.eventMotionDescription?.[0]
+  const motion = extractMotionValue(motionDescription)
+  const centroid = ringCentroid(candidateRing)
+  const severity = (feature.properties?.severity ?? '').toLowerCase()
+  const urgency = (feature.properties?.urgency ?? '').toLowerCase()
+  const event = (feature.properties?.event ?? '').toLowerCase()
+
+  const inferredSpeed = classification === 'hurricane'
+    ? 14
+    : severity === 'severe' || urgency === 'immediate'
+      ? 26
+      : severity === 'moderate'
+        ? 18
+        : 12
+
+  const inferredDirection = classification === 'hurricane'
+    ? 320
+    : event.includes('tornado')
+      ? 165
+      : event.includes('flood')
+        ? 190
+        : 225
+
+  const movedPolygon = candidateRing.map(([lat, lng], pointIndex) => {
+    const offsetLat = Math.sin((index * 0.7) + pointIndex) * 0.03
+    const offsetLng = Math.cos((index * 0.6) + pointIndex) * 0.03
+    return [Number((lat + offsetLat).toFixed(4)), Number((lng + offsetLng).toFixed(4))] as [number, number]
+  })
+
+  return {
+    id: feature.id ?? `${feature.properties?.event ?? 'alert'}-${index}`,
+    name: feature.properties?.headline
+      ?? feature.properties?.event
+      ?? 'Active weather alert',
+    type: classification,
+    hurricaneCategory: classification === 'hurricane' ? 1 : undefined,
+    polygon: movedPolygon,
+    centroid,
+    movement: {
+      speedKts: motion?.speedKts ? Number(motion.speedKts.toFixed(2)) : inferredSpeed,
+      directionDeg: motion?.directionDeg ?? inferredDirection,
+    },
+    intensity: {
+      category: severity === 'severe'
+        ? 'severe'
+        : severity === 'moderate'
+          ? 'moderate'
+          : 'light',
+      dbz: classification === 'hurricane'
+        ? 65
+        : severity === 'severe'
+          ? 58
+          : severity === 'moderate'
+            ? 44
+            : 30,
+    },
+    updatedAt: feature.properties?.sent ?? feature.properties?.effective ?? new Date().toISOString(),
+    stale: Boolean(feature.properties?.expires && new Date(feature.properties.expires).getTime() < Date.now()),
+  }
 }
 
 type WindSample = {
@@ -434,185 +665,22 @@ function buildCoherentCloudField(
   return points
 }
 
-function isCentroidInBounds(
-  centroid: [number, number],
-  bounds: ViewportBounds,
-  options?: { latPad?: number; lngPad?: number },
-): boolean {
-  const latPad = options?.latPad ?? 0
-  const lngPad = options?.lngPad ?? 0
-  const [lat, lng] = centroid
-  return lat >= (bounds.south - latPad)
-    && lat <= (bounds.north + latPad)
-    && lng >= (bounds.west - lngPad)
-    && lng <= (bounds.east + lngPad)
-}
+async function buildStormCells(timeIso: string, bounds?: ViewportBounds): Promise<StormCell[]> {
+  const alerts = await fetchActiveStormAlerts()
+  const cells = alerts
+    .map((feature, index) => alertToStormCell(feature, bounds, index))
+    .filter((cell): cell is StormCell => Boolean(cell))
 
-function buildStormCells(timeIso: string, bounds?: ViewportBounds): StormCell[] {
-  const jitter = getTimeJitter(timeIso)
-  const now = Date.now()
+  if (cells.length > 0) return cells
 
-  const seed = [
-    {
-      id: 'storm-gulf-echo',
-      name: 'Echo Cell',
-      base: [
-        [29.8, -92.8],
-        [30.4, -91.9],
-        [29.9, -91.1],
-        [29.2, -91.8],
-      ] as Array<[number, number]>,
-      centroid: [29.8, -91.9] as [number, number],
-      speedKts: 34,
-      directionDeg: 58,
-      dbz: 49,
-      category: 'severe' as const,
-    },
-    {
-      id: 'storm-midwest-nova',
-      name: 'Nova Band',
-      base: [
-        [41.6, -92.4],
-        [42.2, -91.2],
-        [41.4, -90.6],
-        [40.9, -91.7],
-      ] as Array<[number, number]>,
-      centroid: [41.5, -91.5] as [number, number],
-      speedKts: 26,
-      directionDeg: 81,
-      dbz: 41,
-      category: 'moderate' as const,
-    },
-    {
-      id: 'storm-atlantic-cirrus',
-      name: 'Cirrus Front',
-      type: 'storm' as const,
-      base: [
-        [36.1, -75.2],
-        [36.8, -74.5],
-        [36.2, -73.8],
-        [35.6, -74.4],
-      ] as Array<[number, number]>,
-      centroid: [36.2, -74.5] as [number, number],
-      speedKts: 22,
-      directionDeg: 36,
-      dbz: 33,
-      category: 'light' as const,
-    },
-    {
-      id: 'hurricane-atlantic-helena',
-      name: 'Hurricane Helena',
-      type: 'hurricane' as const,
-      hurricaneCategory: 3 as const,
-      base: [
-        [24.5, -67.5],
-        [26.2, -65.1],
-        [24.8, -62.8],
-        [22.7, -64.4],
-      ] as Array<[number, number]>,
-      centroid: [24.6, -64.9] as [number, number],
-      speedKts: 17,
-      directionDeg: 318,
-      dbz: 57,
-      category: 'severe' as const,
-    },
-    {
-      id: 'hurricane-pacific-orion',
-      name: 'Hurricane Orion',
-      type: 'hurricane' as const,
-      hurricaneCategory: 2 as const,
-      base: [
-        [15.2, -128.8],
-        [16.9, -126.3],
-        [15.4, -123.9],
-        [13.2, -125.4],
-      ] as Array<[number, number]>,
-      centroid: [15.2, -126.1] as [number, number],
-      speedKts: 13,
-      directionDeg: 298,
-      dbz: 54,
-      category: 'severe' as const,
-    },
-    {
-      id: 'storm-noreaster-nyb',
-      name: 'Noreaster Band',
-      type: 'storm' as const,
-      base: [
-        [41.6, -75.8],
-        [42.3, -73.9],
-        [41.2, -72.2],
-        [40.3, -73.8],
-      ] as Array<[number, number]>,
-      centroid: [41.4, -73.9] as [number, number],
-      speedKts: 29,
-      directionDeg: 62,
-      dbz: 46,
-      category: 'moderate' as const,
-    },
-    {
-      id: 'hurricane-atlantic-ny-approach',
-      name: 'Hurricane Nyx',
-      type: 'hurricane' as const,
-      hurricaneCategory: 1 as const,
-      base: [
-        [38.6, -69.8],
-        [39.9, -67.9],
-        [38.8, -66.2],
-        [37.4, -67.3],
-      ] as Array<[number, number]>,
-      centroid: [38.7, -67.8] as [number, number],
-      speedKts: 16,
-      directionDeg: 334,
-      dbz: 52,
-      category: 'severe' as const,
-    },
-  ]
-
-  const scopedSeed = bounds
-    ? (() => {
-      const latSpan = Math.max(2, bounds.north - bounds.south)
-      const lngSpan = Math.max(3, bounds.east - bounds.west)
-      const latPad = clamp(latSpan * 0.12, 0.7, 4.5)
-      const lngPad = clamp(lngSpan * 0.12, 1.1, 6)
-
-      const inBounds = seed.filter((cell) => isCentroidInBounds(cell.centroid, bounds, { latPad, lngPad }))
-      // Keep returning real storms near the map edge so viewport tracking remains stable while panning.
-      return inBounds.length > 0 ? inBounds : seed
-    })()
-    : seed
-
-  return scopedSeed.map((cell, index) => {
-    const polygon = cell.base.map(([lat, lng], pointIndex) => (
-      shiftPoint(lat, lng, jitter + (index * 90), pointIndex * 0.8, pointIndex * 0.6)
-    ))
-    const centroid = shiftPoint(cell.centroid[0], cell.centroid[1], jitter + (index * 120), 0.2, 0.5)
-    const stale = (now - new Date(timeIso).getTime()) > (20 * 60 * 1000)
-
-    return {
-      id: cell.id,
-      name: cell.name,
-      type: cell.type,
-      hurricaneCategory: cell.type === 'hurricane' ? cell.hurricaneCategory : undefined,
-      polygon,
-      centroid,
-      movement: {
-        speedKts: cell.speedKts,
-        directionDeg: cell.directionDeg,
-      },
-      intensity: {
-        category: cell.category,
-        dbz: cell.dbz,
-      },
-      updatedAt: new Date(Math.min(now, new Date(timeIso).getTime() + 180000)).toISOString(),
-      stale,
-    }
-  })
+  const stale = (Date.now() - new Date(timeIso).getTime()) > (20 * 60 * 1000)
+  return stale ? [] : []
 }
 
 async function buildLayerResponse(type: EnvLayerType, timeIso: string, bounds?: ViewportBounds) {
   const jitter = getTimeJitter(timeIso)
   const stale = (Date.now() - new Date(timeIso).getTime()) > (30 * 60 * 1000)
-  const stormCells = buildStormCells(timeIso, bounds)
+  const stormCells = await buildStormCells(timeIso, bounds)
 
   if (type === 'wind') {
     const realWindPoints = await buildRealWindField(bounds, timeIso)
@@ -872,12 +940,12 @@ weatherRouter.get('/radar/frames', async (c) => {
   });
 });
 
-weatherRouter.get('/storms', (c) => {
+weatherRouter.get('/storms', async (c) => {
   const time = c.req.query('time') ?? new Date().toISOString();
   const bounds = parseBbox(c.req.query('bbox'))
   return c.json({
     time,
-    cells: buildStormCells(time, bounds),
+    cells: await buildStormCells(time, bounds),
   });
 });
 

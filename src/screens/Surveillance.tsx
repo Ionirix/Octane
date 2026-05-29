@@ -85,6 +85,22 @@ type TrafficIncidentResponse = {
 
 type TrafficRoadClass = VisualizationTrafficSegment['roadClass']
 type BasemapMode = 'satellite' | 'traffic'
+type HealthNodeTier = 'town' | 'city' | 'metropolis'
+
+type HealthNodeLocation = {
+  id: string
+  name: string
+  country: string
+  tier: HealthNodeTier
+  lat: number
+  lng: number
+  repairRadiusKm: number
+}
+
+type ActiveHealthNode = HealthNodeLocation & {
+  mission: string
+  activeSince: number
+}
 
 const FALLBACK_NODES: VisualizationNode[] = [
   { id: 'edge-na', name: 'EDGE NA', country: 'United States', region: 'North America', lat: 39.8, lng: -98.6, status: 'NOMINAL', latencyMs: 36, loadPercent: 48, requestsPerMin: 22400, connections: ['edge-eu', 'edge-apac'] },
@@ -94,6 +110,39 @@ const FALLBACK_NODES: VisualizationNode[] = [
 
 const FEED_TIMELINE_LIMIT = 96
 const STALE_THRESHOLD_MS = 24_000
+const HEALTH_NODE_ROTATION_MS = 14_000
+const ACTIVE_HEALTH_NODE_COUNT = 9
+const HEALTH_NODE_TIER_ORDER: HealthNodeTier[] = ['metropolis', 'city', 'town']
+const HEALTH_NODE_PER_TIER: Record<HealthNodeTier, number> = { metropolis: 4, city: 3, town: 2 }
+
+const HEALTH_NODE_LOCATIONS: HealthNodeLocation[] = [
+  { id: 'hn-town-reykjavik', name: 'Reykjavik', country: 'Iceland', tier: 'town', lat: 64.1466, lng: -21.9426, repairRadiusKm: 220 },
+  { id: 'hn-town-bergen', name: 'Bergen', country: 'Norway', tier: 'town', lat: 60.3913, lng: 5.3221, repairRadiusKm: 260 },
+  { id: 'hn-town-curitiba', name: 'Curitiba', country: 'Brazil', tier: 'town', lat: -25.429, lng: -49.2671, repairRadiusKm: 300 },
+  { id: 'hn-town-port-louis', name: 'Port Louis', country: 'Mauritius', tier: 'town', lat: -20.1609, lng: 57.5012, repairRadiusKm: 180 },
+  { id: 'hn-city-anchorage', name: 'Anchorage', country: 'United States', tier: 'city', lat: 61.2181, lng: -149.9003, repairRadiusKm: 520 },
+  { id: 'hn-city-toronto', name: 'Toronto', country: 'Canada', tier: 'city', lat: 43.6532, lng: -79.3832, repairRadiusKm: 680 },
+  { id: 'hn-city-madrid', name: 'Madrid', country: 'Spain', tier: 'city', lat: 40.4168, lng: -3.7038, repairRadiusKm: 710 },
+  { id: 'hn-city-nairobi', name: 'Nairobi', country: 'Kenya', tier: 'city', lat: -1.2921, lng: 36.8219, repairRadiusKm: 640 },
+  { id: 'hn-city-lima', name: 'Lima', country: 'Peru', tier: 'city', lat: -12.0464, lng: -77.0428, repairRadiusKm: 690 },
+  { id: 'hn-city-auckland', name: 'Auckland', country: 'New Zealand', tier: 'city', lat: -36.8485, lng: 174.7633, repairRadiusKm: 670 },
+  { id: 'hn-metro-new-york', name: 'New York', country: 'United States', tier: 'metropolis', lat: 40.7128, lng: -74.006, repairRadiusKm: 1200 },
+  { id: 'hn-metro-los-angeles', name: 'Los Angeles', country: 'United States', tier: 'metropolis', lat: 34.0522, lng: -118.2437, repairRadiusKm: 1180 },
+  { id: 'hn-metro-mexico-city', name: 'Mexico City', country: 'Mexico', tier: 'metropolis', lat: 19.4326, lng: -99.1332, repairRadiusKm: 1050 },
+  { id: 'hn-metro-sao-paulo', name: 'Sao Paulo', country: 'Brazil', tier: 'metropolis', lat: -23.5558, lng: -46.6396, repairRadiusKm: 1220 },
+  { id: 'hn-metro-london', name: 'London', country: 'United Kingdom', tier: 'metropolis', lat: 51.5074, lng: -0.1278, repairRadiusKm: 1140 },
+  { id: 'hn-metro-paris', name: 'Paris', country: 'France', tier: 'metropolis', lat: 48.8566, lng: 2.3522, repairRadiusKm: 1160 },
+  { id: 'hn-metro-lagos', name: 'Lagos', country: 'Nigeria', tier: 'metropolis', lat: 6.5244, lng: 3.3792, repairRadiusKm: 1040 },
+  { id: 'hn-metro-cairo', name: 'Cairo', country: 'Egypt', tier: 'metropolis', lat: 30.0444, lng: 31.2357, repairRadiusKm: 1010 },
+  { id: 'hn-metro-mumbai', name: 'Mumbai', country: 'India', tier: 'metropolis', lat: 19.076, lng: 72.8777, repairRadiusKm: 1240 },
+  { id: 'hn-metro-delhi', name: 'Delhi', country: 'India', tier: 'metropolis', lat: 28.6139, lng: 77.209, repairRadiusKm: 1260 },
+  { id: 'hn-metro-bangkok', name: 'Bangkok', country: 'Thailand', tier: 'metropolis', lat: 13.7563, lng: 100.5018, repairRadiusKm: 1090 },
+  { id: 'hn-metro-tokyo', name: 'Tokyo', country: 'Japan', tier: 'metropolis', lat: 35.6762, lng: 139.6503, repairRadiusKm: 1280 },
+  { id: 'hn-metro-seoul', name: 'Seoul', country: 'South Korea', tier: 'metropolis', lat: 37.5665, lng: 126.978, repairRadiusKm: 1100 },
+  { id: 'hn-metro-shanghai', name: 'Shanghai', country: 'China', tier: 'metropolis', lat: 31.2304, lng: 121.4737, repairRadiusKm: 1270 },
+  { id: 'hn-metro-jakarta', name: 'Jakarta', country: 'Indonesia', tier: 'metropolis', lat: -6.2088, lng: 106.8456, repairRadiusKm: 1110 },
+  { id: 'hn-metro-sydney', name: 'Sydney', country: 'Australia', tier: 'metropolis', lat: -33.8688, lng: 151.2093, repairRadiusKm: 1190 },
+]
 
 function normalizeAlertCategory(rawType: string): GlobalEventCategory {
   const value = rawType.trim().toLowerCase()
@@ -241,7 +290,7 @@ function mergeFeedTimeline(
     timeline.unshift({
       ...activeAlert,
       resolved: false,
-      timestamp: Math.max(activeAlert.timestamp, now - 60_000),
+      timestamp: now,
     })
   })
 
@@ -270,6 +319,40 @@ function mergeFeedTimeline(
   return timeline
     .sort((left, right) => (right.resolvedAt ?? right.timestamp) - (left.resolvedAt ?? left.timestamp))
     .slice(0, FEED_TIMELINE_LIMIT)
+}
+
+function rotateTier(pool: HealthNodeLocation[], start: number, count: number, activeSince: number): ActiveHealthNode[] {
+  if (pool.length === 0 || count <= 0) return []
+  const active: ActiveHealthNode[] = []
+  for (let index = 0; index < count; index += 1) {
+    const node = pool[(start + index) % pool.length]
+    active.push({
+      ...node,
+      mission: 'SELF-HEALING INTERNET REPAIR',
+      activeSince,
+    })
+  }
+  return active
+}
+
+function getActiveHealthNodes(now: number): ActiveHealthNode[] {
+  const cycle = Math.floor(now / HEALTH_NODE_ROTATION_MS)
+  const activeSince = now - ((cycle % 5) * 20_000)
+
+  const byTier: Record<HealthNodeTier, HealthNodeLocation[]> = {
+    town: HEALTH_NODE_LOCATIONS.filter((node) => node.tier === 'town').sort((a, b) => a.name.localeCompare(b.name)),
+    city: HEALTH_NODE_LOCATIONS.filter((node) => node.tier === 'city').sort((a, b) => a.name.localeCompare(b.name)),
+    metropolis: HEALTH_NODE_LOCATIONS.filter((node) => node.tier === 'metropolis').sort((a, b) => a.name.localeCompare(b.name)),
+  }
+
+  const starts: Record<HealthNodeTier, number> = {
+    metropolis: byTier.metropolis.length > 0 ? cycle % byTier.metropolis.length : 0,
+    city: byTier.city.length > 0 ? (cycle * 2) % byTier.city.length : 0,
+    town: byTier.town.length > 0 ? (cycle * 3) % byTier.town.length : 0,
+  }
+
+  const active = HEALTH_NODE_TIER_ORDER.flatMap((tier) => rotateTier(byTier[tier], starts[tier], HEALTH_NODE_PER_TIER[tier], activeSince))
+  return active.slice(0, ACTIVE_HEALTH_NODE_COUNT)
 }
 
 function Sparkline({ values, color }: { values: number[]; color: string }) {
@@ -302,11 +385,13 @@ export default function Surveillance() {
   const [lastSync, setLastSync] = useState<number>(Date.now())
   const [feedAlerts, setFeedAlerts] = useState<SurveillanceAlertFeed[]>([])
   const [alertFeedClearedAt, setAlertFeedClearedAt] = useState<number>(0)
+  const [mapViewportBbox, setMapViewportBbox] = useState<string | null>(null)
   const [telemetrySamples, setTelemetrySamples] = useState<TelemetrySample[]>([])
   const [wireframesVisible, setWireframesVisible] = useState(true)
   const [trafficVisible, setTrafficVisible] = useState(true)
   const [basemapMode, setBasemapMode] = useState<BasemapMode>('satellite')
   const [trafficViewportBbox, setTrafficViewportBbox] = useState<string | null>(null)
+  const mapViewportBboxRef = useRef<string | null>(null)
   const [trafficSegments, setTrafficSegments] = useState<VisualizationTrafficSegment[]>([])
   const [trafficIncidentEvents, setTrafficIncidentEvents] = useState<VisualizationAlert[]>([])
   const [trafficProvider, setTrafficProvider] = useState('synthetic')
@@ -318,6 +403,7 @@ export default function Surveillance() {
   const [fusionAutomationState, setFusionAutomationState] = useState('nominal')
 
   const activeAlertIndexRef = useRef<Map<string, SurveillanceAlertFeed>>(new Map())
+  const feedViewportRef = useRef<string | null>(null)
   const audioBandsRef = useRef<AudioBands>({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
   const audioRef = useRef<{ context?: AudioContext; analyser?: AnalyserNode; source?: MediaStreamAudioSourceNode; stream?: MediaStream; raf?: number }>({})
   const audioShareRef = useRef<BroadcastChannel | null>(null)
@@ -479,6 +565,20 @@ export default function Surveillance() {
   const audioReactiveEnabled = audioStatus !== 'AUDIO OFF' && audioStatus !== 'REQUESTING...'
   const audioReactiveState = useMemo(() => ({ enabled: audioReactiveEnabled, level: audioLevel, bands: audioBands }), [audioReactiveEnabled, audioLevel, audioBands])
 
+  const handleMapViewportChange = useCallback((bbox: string) => {
+    setTrafficViewportBbox(bbox)
+    if (mapViewportBboxRef.current !== bbox) {
+      mapViewportBboxRef.current = bbox
+      setMapViewportBbox(bbox)
+      if (feedViewportRef.current !== null) {
+        setFeedAlerts([])
+        activeAlertIndexRef.current = new Map()
+        setAlertFeedClearedAt(0)
+      }
+      feedViewportRef.current = bbox
+    }
+  }, [])
+
   const reloadNow = useCallback(async () => {
     setConnectionState({ status: 'reconnecting', message: 'Manual refresh in progress', retries: 0, lastUpdateAt: Date.now() })
     try {
@@ -623,6 +723,7 @@ export default function Surveillance() {
   }, [congestionOnTrafficMapOnly, trafficBbox])
 
   useEffect(() => {
+    if (!mapViewportBbox) return
     const activeFeed = activeEvents
       .filter((event) => !event.resolved)
       .sort((left, right) => (right.timestamp ?? 0) - (left.timestamp ?? 0))
@@ -644,7 +745,7 @@ export default function Surveillance() {
     activeAlertIndexRef.current = nextActiveById
 
     setFeedAlerts((current) => mergeFeedTimeline(current, previousActiveById, nextActiveById, Date.now()))
-  }, [activeEvents])
+  }, [activeEvents, mapViewportBbox])
 
   useEffect(() => {
     const weatherAlerts = activeEvents.filter((alert) => normalizeAlertCategory(alert.type) === 'weather').length
@@ -842,8 +943,14 @@ export default function Surveillance() {
     return acc
   }, { traffic: 0, weather: 0, wildfire: 0, police: 0, service: 0 }), [activeEvents])
 
+  const activeHealthNodes = useMemo(() => getActiveHealthNodes(clockNow), [clockNow])
+  const healthTierCounts = useMemo(() => activeHealthNodes.reduce<Record<HealthNodeTier, number>>((acc, node) => {
+    acc[node.tier] += 1
+    return acc
+  }, { town: 0, city: 0, metropolis: 0 }), [activeHealthNodes])
+
   const stale = (Date.now() - (connection.lastSuccessAt ?? lastSync)) > STALE_THRESHOLD_MS
-  const mapSubtitle = `v7 global intel layered over the v6 sovereign surveillance surface · ${basemapMode} basemap · congestion ${congestionOnTrafficMapOnly ? 'active' : 'standby'} · traffic ${trafficProvider}${trafficStale ? ' · stale' : ''} · ${trafficSummary.dominantTone.toLowerCase()}.`
+  const mapSubtitle = `v7 global intel layered over the v6 sovereign surveillance surface · ${basemapMode} basemap · congestion ${congestionOnTrafficMapOnly ? 'active' : 'standby'} · traffic ${trafficProvider}${trafficStale ? ' · stale' : ''} · ${trafficSummary.dominantTone.toLowerCase()} · health nodes ${activeHealthNodes.length} active.`
 
   return (
     <div className="oct-screen space-y-3 md:space-y-4">
@@ -857,7 +964,7 @@ export default function Surveillance() {
         <MetricCard label="Nodes" value={visibleNodes.length} accent="var(--accent)" sub="Global compute anchors" />
         <MetricCard label="Active Events" value={activeEvents.length} accent="var(--warn)" sub={`Live intelligence pulses · automation ${fusionAutomationState}`} />
         <MetricCard label="p95 Latency" value={Math.round(metrics.p95Latency || 0)} unit="ms" accent="var(--stellar)" sub="Metrics layer" />
-        <MetricCard label="CPU / Memory" value={`${Math.round(metrics.cpu * 100)} / ${Math.round(metrics.memory * 100)}`} unit="%" accent="var(--accent-2)" sub={`Generated ${formatAgo(metrics.generatedAt || generatedAt || Date.now(), clockNow)}`} />
+        <MetricCard label="Active Health Nodes" value={activeHealthNodes.length} accent="var(--accent-2)" sub={`${healthTierCounts.metropolis} metropolis · ${healthTierCounts.city} city · ${healthTierCounts.town} town`} />
       </div>
 
       <Panel title="Map Controls" subtitle="status, layers, and transport control strip">
@@ -1006,8 +1113,9 @@ export default function Surveillance() {
                 focusedNodeId={focusedNode.id}
                 nodes={visibleNodes}
                 alerts={visibleEvents}
+                healthNodes={activeHealthNodes}
                 basemapMode={basemapMode}
-                onTrafficViewportChange={setTrafficViewportBbox}
+                onTrafficViewportChange={handleMapViewportChange}
                 trafficSegments={curatedTrafficSegments}
                 subsystems={visibleSubsystems}
                 geo={visibleGeo}
@@ -1044,8 +1152,30 @@ export default function Surveillance() {
             </div>
           </Panel>
 
-          <Panel title="Event Feed" subtitle={error ?? `${Math.round(intervalMs / 1000)}s cadence • ${connection.status}`}>
+          <Panel title="Active Health Nodes" subtitle="self-healing internet repair network">
+            <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Cycle {Math.floor(clockNow / HEALTH_NODE_ROTATION_MS)} · rotates every {Math.round(HEALTH_NODE_ROTATION_MS / 1000)}s</div>
+            <div className="flex max-h-[280px] flex-col gap-2 overflow-y-auto pr-1">
+              {activeHealthNodes.map((node) => (
+                <div key={node.id} className="rounded border border-[rgba(53,240,161,0.28)] bg-[rgba(4,26,20,0.6)] p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs font-semibold text-[var(--text)]">{node.name}, {node.country}</div>
+                    <span className="rounded border border-[rgba(53,240,161,0.35)] bg-[rgba(53,240,161,0.12)] px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-[rgb(164,252,219)]">{node.tier}</span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-[var(--muted)]">{node.mission}</div>
+                  <div className="mt-1 text-[10px] uppercase tracking-[0.12em] text-[var(--muted)]">Repair radius {node.repairRadiusKm}km · active {new Date(node.activeSince).toLocaleTimeString('en', { hour12: false })}</div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Event Feed" subtitle={error ?? `${Math.round(intervalMs / 1000)}s cadence • ${connection.status}${mapViewportBbox ? ' • viewport active' : ' • awaiting viewport'}`}>
             <div className="mb-2 flex items-center justify-end gap-2 text-[10px] uppercase tracking-[0.14em]"><button type="button" onClick={() => setAlertFeedClearedAt(Date.now())} className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[var(--muted)] hover:text-[var(--text)]">Clear Feed</button></div>
+            {!mapViewportBbox && (
+              <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--accent)] opacity-60">Pan or zoom the map</div>
+                <div className="text-[10px] text-[var(--muted)]">The feed will fill with activity for the area you navigate to</div>
+              </div>
+            )}
             <div className="flex max-h-[355px] flex-col gap-2 overflow-y-auto pr-1">
               {closureFeed.slice(0, 14).map((alert) => (
                 <button key={alert.id} type="button" onClick={() => setFocusedNodeId(alert.serverId ?? focusedNode.id)} className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3 text-left transition-colors hover:border-[var(--accent)]">

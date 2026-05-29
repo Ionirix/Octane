@@ -14,11 +14,23 @@ import '@/styles/map.css'
 type MapModule = typeof import('@/modules/visualization/map')
 type MapController = ReturnType<MapModule['initMap']>
 
+type ActiveHealthNode = {
+  id: string
+  name: string
+  country: string
+  tier: 'town' | 'city' | 'metropolis'
+  lat: number
+  lng: number
+  repairRadiusKm: number
+  mission: string
+}
+
 type SurveillanceMapProps = {
   altitude: number
   focusedNodeId: string
   nodes: VisualizationNode[]
   alerts: VisualizationAlert[]
+  healthNodes?: ActiveHealthNode[]
   basemapMode?: 'satellite' | 'traffic'
   onTrafficViewportChange?: (bbox: string) => void
   trafficSegments?: VisualizationTrafficSegment[]
@@ -50,53 +62,25 @@ type TargetLock = {
   category: TargetCategory
   lat: number
   lng: number
-  angle: number
+  baseAngle: number
   color: string
   metric: string
-  threatLabel: string
+  sourceLabel: string
 }
 
-type TargetPhase = 'entry' | 'acquire' | 'dwell' | 'exit' | 'resolved'
-
-type TargetTrack = TargetLock & {
-  phase: TargetPhase
-  phaseStartedAt: number
-  lastSeenAt: number
-}
-
-type ProjectedTarget = TargetTrack & {
+type ProjectedTarget = TargetLock & {
   x: number
   y: number
-  phaseElapsedMs: number
-  dwellRemainingSeconds: number
-  phaseLabel: string
+  audioScale: number
+  audioTwistDeg: number
+}
+
+type ProjectedHealthNode = ActiveHealthNode & {
+  x: number
+  y: number
 }
 
 const TARGET_ANGLES = [-31, 0, 22, 47]
-const TARGET_ROTATION_MS = 10_000
-const TARGET_PHASE_MS = {
-  entry: 620,
-  acquire: 1_850,
-  dwell: 8_000,
-  exit: 420,
-  resolved: 220,
-} as const
-
-function nextPhase(current: TargetPhase): TargetPhase {
-  if (current === 'entry') return 'acquire'
-  if (current === 'acquire') return 'dwell'
-  if (current === 'dwell') return 'exit'
-  if (current === 'exit') return 'resolved'
-  return 'resolved'
-}
-
-function phaseLabel(phase: TargetPhase): string {
-  if (phase === 'entry') return 'ENTRY'
-  if (phase === 'acquire') return 'ACQUIRING'
-  if (phase === 'dwell') return 'LOCKED'
-  if (phase === 'exit') return 'DISENGAGING'
-  return 'INCIDENT RESOLVED'
-}
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
@@ -129,30 +113,57 @@ function resolveAlertPoint(alert: VisualizationAlert, nodeById: Map<string, Visu
   if (alert.location && typeof alert.location.lat === 'number' && typeof alert.location.lng === 'number') {
     return { lat: alert.location.lat, lng: alert.location.lng }
   }
-  if (alert.serverId) {
-    const node = nodeById.get(alert.serverId)
-    if (node) return { lat: node.lat, lng: node.lng }
-  }
   return null
 }
 
-function geoDistance(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
-  const latDelta = a.lat - b.lat
-  const lngDelta = Math.min(Math.abs(a.lng - b.lng), 360 - Math.abs(a.lng - b.lng))
-  return Math.sqrt((latDelta * latDelta) + (lngDelta * lngDelta))
+function hasRealEvidence(alert: VisualizationAlert): boolean {
+  return Array.isArray(alert.realWorldEvidence) && alert.realWorldEvidence.length > 0
 }
 
-function pickDistributedTargets(
+function maxRealEvidenceQuality(alert: VisualizationAlert): number {
+  if (!Array.isArray(alert.realWorldEvidence) || alert.realWorldEvidence.length === 0) return 0
+  return alert.realWorldEvidence.reduce((max, evidence) => Math.max(max, evidence.quality ?? 0.5), 0)
+}
+
+function isValidLatLng(point: { lat: number; lng: number }): boolean {
+  if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return false
+  if (Math.abs(point.lat) > 90 || Math.abs(point.lng) > 180) return false
+  if (Math.abs(point.lat) < 0.01 && Math.abs(point.lng) < 0.01) return false
+  return true
+}
+
+function isSyntheticOnlyAlert(alert: VisualizationAlert): boolean {
+  const withSimulation = alert as VisualizationAlert & { simulatedEvidence?: unknown[] }
+  const hasSimulation = Array.isArray(withSimulation.simulatedEvidence) && withSimulation.simulatedEvidence.length > 0
+  return hasSimulation && !hasRealEvidence(alert)
+}
+
+function hasTrustedRealLocation(alert: VisualizationAlert): boolean {
+  if (!hasRealEvidence(alert)) return false
+  const quality = maxRealEvidenceQuality(alert)
+  if (quality < 0.55) return false
+
+  if (typeof alert.lat === 'number' && typeof alert.lng === 'number') {
+    return isValidLatLng({ lat: alert.lat, lng: alert.lng })
+  }
+
+  if (alert.location && typeof alert.location.lat === 'number' && typeof alert.location.lng === 'number') {
+    return isValidLatLng({ lat: alert.location.lat, lng: alert.location.lng })
+  }
+
+  return false
+}
+
+function pickRealTargets(
   alerts: VisualizationAlert[],
   nodes: VisualizationNode[],
-  rotationStep = 0,
 ): Array<VisualizationAlert & { lat: number; lng: number; category: TargetCategory }> {
   const nodeById = new Map(nodes.map((node) => [node.id, node]))
   const prioritized = alerts
-    .filter((alert) => !alert.resolved)
+    .filter((alert) => !alert.resolved && !isSyntheticOnlyAlert(alert) && hasTrustedRealLocation(alert))
     .map((alert) => {
       const point = resolveAlertPoint(alert, nodeById)
-      if (!point) return null
+      if (!point || !isValidLatLng(point)) return null
       return {
         ...alert,
         category: normalizeCategory(alert.type),
@@ -167,34 +178,7 @@ function pickDistributedTargets(
       return (right.timestamp ?? 0) - (left.timestamp ?? 0)
     })
 
-  if (prioritized.length === 0) return []
-
-  const rotationStart = Math.max(0, rotationStep % prioritized.length)
-  const rotated = rotationStart === 0
-    ? prioritized
-    : [...prioritized.slice(rotationStart), ...prioritized.slice(0, rotationStart)]
-
-  const picked: Array<VisualizationAlert & { lat: number; lng: number; category: TargetCategory }> = []
-  for (const candidate of rotated) {
-    if (picked.length >= 4) break
-    if (picked.length === 0) {
-      picked.push(candidate)
-      continue
-    }
-
-    const farEnough = picked.every((target) => geoDistance(target, candidate) >= 18)
-    if (farEnough || picked.length >= 3) {
-      picked.push(candidate)
-    }
-  }
-
-  for (const candidate of rotated) {
-    if (picked.length >= 4) break
-    if (picked.some((target) => target.id === candidate.id)) continue
-    picked.push(candidate)
-  }
-
-  return picked.slice(0, 4)
+  return prioritized.slice(0, 4)
 }
 
 function buildMetric(alert: VisualizationAlert): string {
@@ -210,6 +194,7 @@ export function SurveillanceMap({
   focusedNodeId,
   nodes,
   alerts,
+  healthNodes = [],
   basemapMode = 'satellite',
   onTrafficViewportChange,
   trafficSegments,
@@ -228,14 +213,12 @@ export function SurveillanceMap({
   const alertsSignatureRef = useRef('')
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isMobileFullscreenFallback, setIsMobileFullscreenFallback] = useState(false)
-  const [targetTracks, setTargetTracks] = useState<TargetTrack[]>([])
   const [projectedTargets, setProjectedTargets] = useState<ProjectedTarget[]>([])
-  const [now, setNow] = useState(Date.now())
-  const rotationStep = Math.floor(now / TARGET_ROTATION_MS)
+  const [projectedHealthNodes, setProjectedHealthNodes] = useState<ProjectedHealthNode[]>([])
   const fullscreenActive = isFullscreen || isMobileFullscreenFallback
 
   const selectedTargets = useMemo(() => {
-    const nextTargets = pickDistributedTargets(alerts, nodes, rotationStep)
+    const nextTargets = pickRealTargets(alerts, nodes)
     const activeIds = new Set(nextTargets.map((target) => target.id))
 
     Array.from(lockMetaRef.current.keys()).forEach((id) => {
@@ -259,10 +242,12 @@ export function SurveillanceMap({
       }
 
       const intensity = severityRank(target.severity)
-      const confidence = clamp01(0.58 + (intensity * 0.12))
-      const threat = target.severity === 'EMERGENCY' || target.severity === 'CRITICAL'
-        ? `THREAT ${Math.round(82 + (confidence * 13))}`
-        : `CONFIDENCE ${Math.round(confidence * 1000) / 10}%`
+      const confidence = typeof target.confidence === 'number' ? Math.round(target.confidence * 100) : null
+      const sourceLabel = target.realWorldEvidence && target.realWorldEvidence.length > 0
+        ? 'VERIFIED LIVE SIGNAL'
+        : confidence !== null
+          ? `LIVE CONF ${confidence}%`
+          : 'LIVE SIGNAL'
 
       return {
         id: target.id,
@@ -271,13 +256,13 @@ export function SurveillanceMap({
         category: target.category,
         lat: target.lat,
         lng: target.lng,
-        angle: meta.angle,
+        baseAngle: meta.angle,
         color: targetColor(target.severity, target.category),
         metric: buildMetric(target),
-        threatLabel: threat,
+        sourceLabel,
       }
     })
-  }, [alerts, nodes, rotationStep])
+  }, [alerts, nodes])
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -391,102 +376,6 @@ export function SurveillanceMap({
   }, [wireframesVisible])
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      setNow(Date.now())
-    }, 200)
-    return () => window.clearInterval(timer)
-  }, [])
-
-  useEffect(() => {
-    const selectedById = new Map(selectedTargets.map((target) => [target.id, target]))
-
-    setTargetTracks((previous) => {
-      const previousById = new Map(previous.map((track) => [track.id, track]))
-      const nextById = new Map<string, TargetTrack>()
-
-      selectedTargets.forEach((target) => {
-        const previousTrack = previousById.get(target.id)
-        if (!previousTrack) {
-          nextById.set(target.id, {
-            ...target,
-            phase: 'entry',
-            phaseStartedAt: now,
-            lastSeenAt: now,
-          })
-          return
-        }
-
-        const restarting = previousTrack.phase === 'exit' || previousTrack.phase === 'resolved'
-        nextById.set(target.id, {
-          ...previousTrack,
-          ...target,
-          phase: restarting ? 'entry' : previousTrack.phase,
-          phaseStartedAt: restarting ? now : previousTrack.phaseStartedAt,
-          lastSeenAt: now,
-        })
-      })
-
-      previous.forEach((track) => {
-        if (selectedById.has(track.id)) return
-        if (track.phase === 'exit' || track.phase === 'resolved') {
-          nextById.set(track.id, track)
-          return
-        }
-        nextById.set(track.id, {
-          ...track,
-          phase: 'exit',
-          phaseStartedAt: now,
-        })
-      })
-
-      const advanced: TargetTrack[] = []
-      nextById.forEach((track) => {
-        let nextTrack = track
-        let iterations = 0
-        while (iterations < 3) {
-          iterations += 1
-          const elapsed = now - nextTrack.phaseStartedAt
-          const duration = TARGET_PHASE_MS[nextTrack.phase]
-          if (nextTrack.phase === 'dwell' && elapsed >= duration) {
-            nextTrack = {
-              ...nextTrack,
-              phase: 'exit',
-              phaseStartedAt: now,
-            }
-            continue
-          }
-          if (nextTrack.phase !== 'dwell' && elapsed >= duration) {
-            const promoted = nextPhase(nextTrack.phase)
-            if (promoted === 'resolved') {
-              nextTrack = {
-                ...nextTrack,
-                phase: promoted,
-                phaseStartedAt: now,
-              }
-              continue
-            }
-            nextTrack = {
-              ...nextTrack,
-              phase: promoted,
-              phaseStartedAt: now,
-            }
-            continue
-          }
-          break
-        }
-
-        if (nextTrack.phase === 'resolved' && (now - nextTrack.phaseStartedAt) >= TARGET_PHASE_MS.resolved) {
-          return
-        }
-
-        advanced.push(nextTrack)
-      })
-
-      return advanced
-    })
-  }, [now, selectedTargets])
-
-  useEffect(() => {
     let rafId = 0
     let lastTickAt = 0
 
@@ -501,37 +390,53 @@ export function SurveillanceMap({
 
       const controller = controllerRef.current
       const container = containerRef.current
-      if (!controller || !container || targetTracks.length === 0) {
+      if (!controller || !container) {
         setProjectedTargets([])
+        setProjectedHealthNodes([])
         rafId = window.requestAnimationFrame(tick)
         return
       }
 
       const width = container.clientWidth
       const height = container.clientHeight
-      const next = targetTracks
+      const audioEnergy = clamp01(
+        audioReactive?.enabled
+          ? ((audioReactive.level * 0.55) + ((audioReactive.bands?.pulse ?? 0) * 0.45))
+          : 0.12,
+      )
+
+      const nextTargets = selectedTargets
         .map((target) => {
           const point = controller.projectLatLng(target.lat, target.lng)
           if (!point) return null
 
           const x = Math.max(72, Math.min(width - 72, point.x))
           const y = Math.max(72, Math.min(height - 72, point.y))
-          const phaseElapsedMs = Math.max(0, now - target.phaseStartedAt)
-          const dwellRemainingSeconds = target.phase === 'dwell'
-            ? Math.max(0, (TARGET_PHASE_MS.dwell - phaseElapsedMs) / 1000)
-            : 0
+          const wobble = audioReactive?.enabled ? Math.sin((timestamp + (x * 0.7) + (y * 0.35)) / 240) : 0
+          const audioTwistDeg = wobble * (3 + (audioEnergy * 8))
+          const audioScale = 1 + (audioEnergy * 0.24) + (wobble * 0.05)
           return {
             ...target,
             x,
             y,
-            phaseElapsedMs,
-            dwellRemainingSeconds,
-            phaseLabel: phaseLabel(target.phase),
+            audioScale,
+            audioTwistDeg,
           }
         })
         .filter((target): target is ProjectedTarget => target !== null)
 
-      setProjectedTargets(next)
+      const nextHealthNodes = healthNodes
+        .map((node) => {
+          const point = controller.projectLatLng(node.lat, node.lng)
+          if (!point) return null
+          const x = Math.max(20, Math.min(width - 20, point.x))
+          const y = Math.max(20, Math.min(height - 20, point.y))
+          return { ...node, x, y }
+        })
+        .filter((node): node is ProjectedHealthNode => node !== null)
+
+      setProjectedTargets(nextTargets)
+      setProjectedHealthNodes(nextHealthNodes)
       rafId = window.requestAnimationFrame(tick)
     }
 
@@ -539,7 +444,7 @@ export function SurveillanceMap({
     return () => {
       window.cancelAnimationFrame(rafId)
     }
-  }, [now, targetTracks])
+  }, [audioReactive, healthNodes, selectedTargets])
 
   const toggleFullscreen = async () => {
     const surface = surfaceRef.current
@@ -607,9 +512,16 @@ export function SurveillanceMap({
         }}
       >
         <div className="surveillance-targeting-banner">
-          TARGETING LAYER ACTIVE • {projectedTargets.filter((target) => target.phase === 'entry' || target.phase === 'acquire' || target.phase === 'dwell').length}/4 INCIDENTS LOCKED • GLOBAL MULTI-TARGET ACQUISITION • ROTATION CYCLE: 2.4s
+          TARGETING LAYER ACTIVE • {projectedTargets.length} REAL INCIDENT TARGETS • AUDIO REACTIVITY ON LIVE TARGETS ONLY
         </div>
-        {projectedTargets.map((target, index) => {
+        {projectedHealthNodes.map((node) => (
+          <div key={node.id} className={`surveillance-health-node surveillance-health-node--${node.tier}`} style={{ left: `${node.x}px`, top: `${node.y}px` }}>
+            <div className="surveillance-health-node__dot" />
+            <div className="surveillance-health-node__pulse" />
+            {node.tier === 'metropolis' ? <div className="surveillance-health-node__label">{node.name} HEAL</div> : null}
+          </div>
+        ))}
+        {projectedTargets.map((target) => {
           const labelRight = target.x < 440
           const labelX = target.x + (labelRight ? 96 : -240)
           const labelY = target.y - 18
@@ -617,14 +529,13 @@ export function SurveillanceMap({
           const lineWidth = labelRight ? 90 : 76
 
           return (
-            <div key={target.id} className={`surveillance-target-lock surveillance-target-lock--${target.phase}`} style={{ left: `${target.x}px`, top: `${target.y}px` }}>
+            <div key={target.id} className="surveillance-target-lock surveillance-target-lock--live" style={{ left: `${target.x}px`, top: `${target.y}px` }}>
               <div
                 className="surveillance-target-reticle"
                 style={{
                   ['--target-color' as string]: target.color,
-                  ['--target-angle' as string]: `${target.angle}deg`,
-                  ['--target-phase-progress' as string]: String(clamp01(target.phaseElapsedMs / TARGET_PHASE_MS[target.phase])),
-                  animationDelay: `${index * 90}ms`,
+                  ['--target-angle' as string]: `${target.baseAngle + target.audioTwistDeg}deg`,
+                  ['--target-scale' as string]: String(target.audioScale),
                 }}
               >
                 <div className="surveillance-target-reticle-inner" />
@@ -640,23 +551,15 @@ export function SurveillanceMap({
 
               <div className="surveillance-target-label" style={{ left: `${labelX - target.x}px`, top: `${labelY - target.y}px` }}>
                 <div className="surveillance-target-title">{target.title.toUpperCase()}</div>
-                <div className="surveillance-target-meta">{target.phaseLabel} • {target.metric}</div>
-                {target.phase !== 'resolved' ? <div className="surveillance-target-threat">{target.threatLabel}</div> : null}
-                <div className="surveillance-target-dwell">
-                  {target.phase === 'dwell'
-                    ? `DWELL ${target.dwellRemainingSeconds.toFixed(1)}s`
-                    : target.phase === 'resolved'
-                      ? 'FLASH RESOLVED'
-                      : target.phase === 'exit'
-                        ? 'EXITING'
-                        : 'LOCK TRANSITION'}
-                </div>
+                <div className="surveillance-target-meta">LIVE • {target.metric}</div>
+                <div className="surveillance-target-threat">{target.sourceLabel}</div>
+                <div className="surveillance-target-dwell">LAT {target.lat.toFixed(2)} • LNG {target.lng.toFixed(2)}</div>
               </div>
             </div>
           )
         })}
         <div className="surveillance-targeting-footer">
-          TARGETING LAYER v2.3 ENABLED • Auto-dwell 8s per target • Auto-dismiss on resolution
+          TARGETING LAYER v2.4 ENABLED • NO SYNTHETIC TARGETS • REAL EVENTS ONLY
         </div>
       </div>
       {!edgeToEdge && <div className="surveillance-surface__caption">Leaflet transit map with live wireframe grid, route overlays, and alert rings.</div>}
