@@ -131,6 +131,22 @@ type TrafficAudioProfile = {
   roadClass: VisualizationTrafficSegment['roadClass']
 }
 
+type PairActivationProfile = {
+  partnerIndex: number
+  phase: number
+  gain: number
+  gate: number
+}
+
+type OctaneV7SimulationProfile = {
+  outer: L.Circle
+  inner: CircleMarker
+  baseRadiusMeters: number
+  baseInnerRadius: number
+  phase: number
+  activationOffset: number
+}
+
 const GLOBAL_EVENT_DOT_COLORS: Record<GlobalEventCategory, { stroke: string; fill: string; label: string }> = {
   traffic: { stroke: '#f97316', fill: '#fdba74', label: 'Traffic' },
   weather: { stroke: '#3b82f6', fill: '#93c5fd', label: 'Weather' },
@@ -153,6 +169,9 @@ const AMBIENT_AUDIO_DOT_POOL_SIZE = 16
 const AUDIO_UPDATE_INTERVAL_MS = 120
 const WIREFRAME_STAGGER_BUCKETS = 2
 const MAX_QUEUED_BURST_SPAWNS = 10
+const PAIR_RESHUFFLE_STEPS = 280
+const OCTANE_V7_ACTIVATION_INTERVAL_MS = 1800
+const OCTANE_V7_ACTIVATION_BUCKETS = 6
 
 const NETWORK_POINTS: LatLng[] = [
   [64, -150], [57, -105], [49, -125], [40, -100], [32, -85], [22, -102], [15, -90], [6, -79],
@@ -169,33 +188,147 @@ const NETWORK_POINTS: LatLng[] = [
 const DATA_CENTER_CITIES: DataCenterCity[] = [
   { id: 'nyc', label: 'NYC', lat: 40.7128, lng: -74.006 },
   { id: 'la', label: 'LA', lat: 34.0522, lng: -118.2437 },
-  { id: 'shanghai', label: 'Shanghai', lat: 31.2304, lng: 121.4737 },
+  { id: 'san_francisco', label: 'San Francisco', lat: 37.7749, lng: -122.4194 },
+  { id: 'seattle', label: 'Seattle', lat: 47.6062, lng: -122.3321 },
+  { id: 'vancouver', label: 'Vancouver', lat: 49.2827, lng: -123.1207 },
+  { id: 'toronto', label: 'Toronto', lat: 43.6532, lng: -79.3832 },
+  { id: 'montreal', label: 'Montreal', lat: 45.5019, lng: -73.5674 },
+  { id: 'chicago', label: 'Chicago', lat: 41.8781, lng: -87.6298 },
+  { id: 'boston', label: 'Boston', lat: 42.3601, lng: -71.0589 },
+  { id: 'washington_dc', label: 'Washington, D.C.', lat: 38.9072, lng: -77.0369 },
+  { id: 'atlanta', label: 'Atlanta', lat: 33.749, lng: -84.388 },
+  { id: 'miami', label: 'Miami', lat: 25.7617, lng: -80.1918 },
+  { id: 'dallas', label: 'Dallas', lat: 32.7767, lng: -96.797 },
+  { id: 'houston', label: 'Houston', lat: 29.7604, lng: -95.3698 },
+  { id: 'phoenix', label: 'Phoenix', lat: 33.4484, lng: -112.074 },
+  { id: 'las_vegas', label: 'Las Vegas', lat: 36.1699, lng: -115.1398 },
+  { id: 'mexico_city', label: 'Mexico City', lat: 19.4326, lng: -99.1332 },
+  { id: 'guadalajara', label: 'Guadalajara', lat: 20.6597, lng: -103.3496 },
+  { id: 'monterrey', label: 'Monterrey', lat: 25.6866, lng: -100.3161 },
+  { id: 'bogota', label: 'Bogota', lat: 4.711, lng: -74.0721 },
+  { id: 'lima', label: 'Lima', lat: -12.0464, lng: -77.0428 },
+  { id: 'santiago', label: 'Santiago', lat: -33.4489, lng: -70.6693 },
+  { id: 'buenos_aires', label: 'Buenos Aires', lat: -34.6037, lng: -58.3816 },
+  { id: 'sao_paulo', label: 'Sao Paulo', lat: -23.5505, lng: -46.6333 },
   { id: 'dubai', label: 'Dubai', lat: 25.2048, lng: 55.2708 },
+  { id: 'abu_dhabi', label: 'Abu Dhabi', lat: 24.4539, lng: 54.3773 },
+  { id: 'doha', label: 'Doha', lat: 25.2854, lng: 51.531 },
+  { id: 'riyadh', label: 'Riyadh', lat: 24.7136, lng: 46.6753 },
+  { id: 'jeddah', label: 'Jeddah', lat: 21.4858, lng: 39.1925 },
+  { id: 'istanbul', label: 'Istanbul', lat: 41.0082, lng: 28.9784 },
+  { id: 'cairo', label: 'Cairo', lat: 30.0444, lng: 31.2357 },
+  { id: 'lagos', label: 'Lagos', lat: 6.5244, lng: 3.3792 },
+  { id: 'nairobi', label: 'Nairobi', lat: -1.2921, lng: 36.8219 },
+  { id: 'johannesburg', label: 'Johannesburg', lat: -26.2041, lng: 28.0473 },
+  { id: 'cape_town', label: 'Cape Town', lat: -33.9249, lng: 18.4241 },
+  { id: 'casablanca', label: 'Casablanca', lat: 33.5731, lng: -7.5898 },
   { id: 'france_paris', label: 'France (Paris)', lat: 48.8566, lng: 2.3522 },
   { id: 'london', label: 'London', lat: 51.5074, lng: -0.1278 },
+  { id: 'dublin', label: 'Dublin', lat: 53.3498, lng: -6.2603 },
+  { id: 'lisbon', label: 'Lisbon', lat: 38.7223, lng: -9.1393 },
+  { id: 'barcelona', label: 'Barcelona', lat: 41.3851, lng: 2.1734 },
+  { id: 'rome', label: 'Rome', lat: 41.9028, lng: 12.4964 },
   { id: 'milan', label: 'Milan', lat: 45.4642, lng: 9.19 },
+  { id: 'zurich', label: 'Zurich', lat: 47.3769, lng: 8.5417 },
+  { id: 'vienna', label: 'Vienna', lat: 48.2082, lng: 16.3738 },
+  { id: 'prague', label: 'Prague', lat: 50.0755, lng: 14.4378 },
+  { id: 'warsaw', label: 'Warsaw', lat: 52.2297, lng: 21.0122 },
+  { id: 'budapest', label: 'Budapest', lat: 47.4979, lng: 19.0402 },
   { id: 'berlin', label: 'Berlin', lat: 52.52, lng: 13.405 },
+  { id: 'hamburg', label: 'Hamburg', lat: 53.5511, lng: 9.9937 },
   { id: 'brussels', label: 'Brussels', lat: 50.8503, lng: 4.3517 },
   { id: 'amsterdam', label: 'Amsterdam', lat: 52.3676, lng: 4.9041 },
+  { id: 'copenhagen', label: 'Copenhagen', lat: 55.6761, lng: 12.5683 },
+  { id: 'stockholm', label: 'Stockholm', lat: 59.3293, lng: 18.0686 },
+  { id: 'oslo', label: 'Oslo', lat: 59.9139, lng: 10.7522 },
+  { id: 'helsinki', label: 'Helsinki', lat: 60.1699, lng: 24.9384 },
   { id: 'moscow', label: 'Moscow', lat: 55.7558, lng: 37.6173 },
   { id: 'kyiv', label: 'Kyiv', lat: 50.4501, lng: 30.5234 },
+  { id: 'athens', label: 'Athens', lat: 37.9838, lng: 23.7275 },
   { id: 'tokyo', label: 'Tokyo', lat: 35.6762, lng: 139.6503 },
-  { id: 'sydney', label: 'Sydney', lat: -33.8688, lng: 151.2093 },
-  { id: 'rio', label: 'Rio de Janeiro', lat: -22.9068, lng: -43.1729 },
-  { id: 'mexico_city', label: 'Mexico City', lat: 19.4326, lng: -99.1332 },
-  { id: 'miami', label: 'Miami', lat: 25.7617, lng: -80.1918 },
-  { id: 'chicago', label: 'Chicago', lat: 41.8781, lng: -87.6298 },
-  { id: 'toronto', label: 'Toronto', lat: 43.6532, lng: -79.3832 },
-  { id: 'seattle', label: 'Seattle', lat: 47.6062, lng: -122.3321 },
-  { id: 'washington_dc', label: 'Washington, D.C.', lat: 38.9072, lng: -77.0369 },
-  { id: 'las_vegas', label: 'Las Vegas', lat: 36.1699, lng: -115.1398 },
+  { id: 'osaka', label: 'Osaka', lat: 34.6937, lng: 135.5023 },
+  { id: 'seoul', label: 'Seoul', lat: 37.5665, lng: 126.978 },
+  { id: 'busan', label: 'Busan', lat: 35.1796, lng: 129.0756 },
+  { id: 'taipei', label: 'Taipei', lat: 25.033, lng: 121.5654 },
+  { id: 'shanghai', label: 'Shanghai', lat: 31.2304, lng: 121.4737 },
+  { id: 'beijing', label: 'Beijing', lat: 39.9042, lng: 116.4074 },
+  { id: 'shenzhen', label: 'Shenzhen', lat: 22.5431, lng: 114.0579 },
+  { id: 'guangzhou', label: 'Guangzhou', lat: 23.1291, lng: 113.2644 },
+  { id: 'hong_kong', label: 'Hong Kong', lat: 22.3193, lng: 114.1694 },
+  { id: 'wuhan', label: 'Wuhan', lat: 30.5928, lng: 114.3055 },
+  { id: 'chengdu', label: 'Chengdu', lat: 30.5728, lng: 104.0668 },
+  { id: 'chongqing', label: 'Chongqing', lat: 29.4316, lng: 106.9123 },
+  { id: 'singapore', label: 'Singapore', lat: 1.3521, lng: 103.8198 },
+  { id: 'kuala_lumpur', label: 'Kuala Lumpur', lat: 3.139, lng: 101.6869 },
+  { id: 'jakarta', label: 'Jakarta', lat: -6.2088, lng: 106.8456 },
+  { id: 'bangkok', label: 'Bangkok', lat: 13.7563, lng: 100.5018 },
+  { id: 'ho_chi_minh_city', label: 'Ho Chi Minh City', lat: 10.8231, lng: 106.6297 },
+  { id: 'hanoi', label: 'Hanoi', lat: 21.0278, lng: 105.8342 },
+  { id: 'manila', label: 'Manila', lat: 14.5995, lng: 120.9842 },
+  { id: 'delhi', label: 'Delhi', lat: 28.6139, lng: 77.209 },
+  { id: 'mumbai', label: 'Mumbai', lat: 19.076, lng: 72.8777 },
+  { id: 'bengaluru', label: 'Bengaluru', lat: 12.9716, lng: 77.5946 },
+  { id: 'hyderabad', label: 'Hyderabad', lat: 17.385, lng: 78.4867 },
+  { id: 'chennai', label: 'Chennai', lat: 13.0827, lng: 80.2707 },
+  { id: 'kolkata', label: 'Kolkata', lat: 22.5726, lng: 88.3639 },
+  { id: 'dhaka', label: 'Dhaka', lat: 23.8103, lng: 90.4125 },
+  { id: 'karachi', label: 'Karachi', lat: 24.8607, lng: 67.0011 },
+  { id: 'lahore', label: 'Lahore', lat: 31.5497, lng: 74.3436 },
   { id: 'zagreb', label: 'Zagreb', lat: 45.815, lng: 15.9819 },
   { id: 'madrid', label: 'Madrid', lat: 40.4168, lng: -3.7038 },
   { id: 'kabul', label: 'Kabul', lat: 34.5553, lng: 69.2075 },
-  { id: 'taipei', label: 'Taipei', lat: 25.033, lng: 121.5654 },
-  { id: 'seoul', label: 'Seoul', lat: 37.5665, lng: 126.978 },
   { id: 'st_petersburg', label: 'St Petersburg', lat: 59.9311, lng: 30.3609 },
+  { id: 'sydney', label: 'Sydney', lat: -33.8688, lng: 151.2093 },
+  { id: 'melbourne', label: 'Melbourne', lat: -37.8136, lng: 144.9631 },
+  { id: 'brisbane', label: 'Brisbane', lat: -27.4698, lng: 153.0251 },
+  { id: 'perth', label: 'Perth', lat: -31.9505, lng: 115.8605 },
+  { id: 'auckland', label: 'Auckland', lat: -36.8509, lng: 174.7645 },
+  { id: 'rio', label: 'Rio de Janeiro', lat: -22.9068, lng: -43.1729 },
 ]
+
+const SUPPLEMENTAL_SYSTEM_CITIES: DataCenterCity[] = [
+  { id: 'new_york', label: 'New York', lat: 40.7128, lng: -74.0060 },
+  { id: 'los_angeles', label: 'Los Angeles', lat: 34.0522, lng: -118.2437 },
+  { id: 'paris', label: 'Paris', lat: 48.8566, lng: 2.3522 },
+  { id: 'frankfurt', label: 'Frankfurt', lat: 50.1109, lng: 8.6821 },
+  { id: 'manama', label: 'Manama', lat: 26.2235, lng: 50.5876 },
+  { id: 'anchorage', label: 'Anchorage', lat: 61.2181, lng: -149.9003 },
+  { id: 'reykjavik', label: 'Reykjavik', lat: 64.1466, lng: -21.9426 },
+  { id: 'bergen', label: 'Bergen', lat: 60.3913, lng: 5.3221 },
+  { id: 'curitiba', label: 'Curitiba', lat: -25.4290, lng: -49.2671 },
+  { id: 'port_louis', label: 'Port Louis', lat: -20.1609, lng: 57.5012 },
+  { id: 'faro', label: 'Faro', lat: 37.0194, lng: -7.9322 },
+  { id: 'hobart', label: 'Hobart', lat: -42.8821, lng: 147.3272 },
+  { id: 'ushuaia', label: 'Ushuaia', lat: -54.8019, lng: -68.3030 },
+  { id: 'galway', label: 'Galway', lat: 53.2707, lng: -9.0568 },
+  { id: 'queenstown', label: 'Queenstown', lat: -45.0312, lng: 168.6626 },
+  { id: 'nuuk', label: 'Nuuk', lat: 64.1814, lng: -51.6941 },
+]
+
+const WIREFRAME_CITIES: DataCenterCity[] = [...DATA_CENTER_CITIES, ...SUPPLEMENTAL_SYSTEM_CITIES]
+
+const WIREFRAME_SIGNAL_POINTS: LatLng[] = (() => {
+  const dedupe = new Set<string>()
+  const points: LatLng[] = []
+
+  const pushPoint = (lat: number, lng: number) => {
+    const normalizedLng = wrapLongitude(lng)
+    const key = `${lat.toFixed(4)}|${normalizedLng.toFixed(4)}`
+    if (dedupe.has(key)) return
+    dedupe.add(key)
+    points.push([lat, normalizedLng])
+  }
+
+  NETWORK_POINTS.forEach(([lat, lng]) => {
+    pushPoint(lat, lng)
+  })
+
+  WIREFRAME_CITIES.forEach((city) => {
+    pushPoint(city.lat, city.lng)
+  })
+
+  return points
+})()
 
 const OCEANIC_CABLE_LINKS: Array<[string, string]> = [
   ['nyc', 'london'],
@@ -212,45 +345,76 @@ const OCEANIC_CABLE_LINKS: Array<[string, string]> = [
   ['dubai', 'london'],
 ]
 
-const GLOBAL_CITY_WIREFRAME_LINKS: Array<[string, string]> = [
-  ['nyc', 'toronto'],
-  ['nyc', 'washington_dc'],
-  ['nyc', 'chicago'],
-  ['nyc', 'miami'],
-  ['la', 'seattle'],
-  ['la', 'las_vegas'],
-  ['la', 'mexico_city'],
-  ['mexico_city', 'miami'],
-  ['toronto', 'chicago'],
-  ['chicago', 'seattle'],
-  ['chicago', 'miami'],
-  ['london', 'france_paris'],
-  ['london', 'amsterdam'],
-  ['london', 'brussels'],
-  ['london', 'berlin'],
-  ['london', 'milan'],
-  ['france_paris', 'brussels'],
-  ['france_paris', 'madrid'],
-  ['france_paris', 'milan'],
-  ['amsterdam', 'brussels'],
-  ['berlin', 'brussels'],
-  ['berlin', 'zagreb'],
-  ['berlin', 'moscow'],
-  ['berlin', 'kyiv'],
-  ['kyiv', 'moscow'],
-  ['moscow', 'st_petersburg'],
-  ['kyiv', 'zagreb'],
-  ['milan', 'zagreb'],
-  ['madrid', 'london'],
-  ['dubai', 'kabul'],
-  ['dubai', 'moscow'],
-  ['dubai', 'france_paris'],
-  ['tokyo', 'seoul'],
-  ['tokyo', 'taipei'],
-  ['tokyo', 'shanghai'],
-  ['seoul', 'shanghai'],
-  ['taipei', 'shanghai'],
+const MAJOR_CITY_BACKBONE_LINKS: Array<[string, string]> = [
+  ['nyc', 'london'],
+  ['nyc', 'france_paris'],
+  ['miami', 'sao_paulo'],
+  ['miami', 'bogota'],
+  ['la', 'tokyo'],
+  ['la', 'seoul'],
+  ['seattle', 'tokyo'],
+  ['vancouver', 'tokyo'],
+  ['london', 'dubai'],
+  ['france_paris', 'dubai'],
+  ['istanbul', 'dubai'],
+  ['dubai', 'mumbai'],
+  ['dubai', 'riyadh'],
+  ['moscow', 'beijing'],
+  ['delhi', 'singapore'],
+  ['mumbai', 'singapore'],
+  ['singapore', 'jakarta'],
+  ['singapore', 'sydney'],
+  ['tokyo', 'sydney'],
+  ['sydney', 'auckland'],
 ]
+
+function cityLinkDistance(a: DataCenterCity, b: DataCenterCity): number {
+  const latScale = 1
+  const lngScale = Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180)
+  const lngDiffRaw = Math.abs(a.lng - b.lng)
+  const lngDiff = Math.min(lngDiffRaw, 360 - lngDiffRaw)
+  const dx = lngDiff * Math.max(0.35, lngScale)
+  const dy = (a.lat - b.lat) * latScale
+  return Math.sqrt((dx * dx) + (dy * dy))
+}
+
+function buildMajorCityWireframeLinks(cities: DataCenterCity[]): Array<[string, string]> {
+  const links: Array<[string, string]> = []
+  const dedupe = new Set<string>()
+  const byId = new Set(cities.map((city) => city.id))
+
+  const addLink = (fromId: string, toId: string) => {
+    if (fromId === toId) return
+    if (!byId.has(fromId) || !byId.has(toId)) return
+    const left = fromId < toId ? fromId : toId
+    const right = fromId < toId ? toId : fromId
+    const key = `${left}|${right}`
+    if (dedupe.has(key)) return
+    dedupe.add(key)
+    links.push([left, right])
+  }
+
+  const neighborCount = 3
+  cities.forEach((city) => {
+    const nearest = cities
+      .filter((candidate) => candidate.id !== city.id)
+      .map((candidate) => ({ candidate, distance: cityLinkDistance(city, candidate) }))
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, neighborCount)
+
+    nearest.forEach(({ candidate }) => {
+      addLink(city.id, candidate.id)
+    })
+  })
+
+  MAJOR_CITY_BACKBONE_LINKS.forEach(([fromId, toId]) => {
+    addLink(fromId, toId)
+  })
+
+  return links
+}
+
+const GLOBAL_CITY_WIREFRAME_LINKS: Array<[string, string]> = buildMajorCityWireframeLinks(WIREFRAME_CITIES)
 
 function markerColor(node: VisualizationNode, config: VisualizationConfig): string {
   if (node.status === 'CRITICAL' || node.status === 'OFFLINE') return config.colors.critical
@@ -396,6 +560,63 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
 }
 
+function makeSeededRandom(seed: number): () => number {
+  let state = (seed >>> 0) || 1
+  return () => {
+    state = (1664525 * state + 1013904223) >>> 0
+    return state / 0x100000000
+  }
+}
+
+function buildPairActivationProfiles(length: number, seed: number): PairActivationProfile[] {
+  if (length <= 0) return []
+  const random = makeSeededRandom(seed)
+  const indexes = Array.from({ length }, (_, index) => index)
+
+  for (let index = indexes.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1))
+    const temp = indexes[index]
+    indexes[index] = indexes[swapIndex]
+    indexes[swapIndex] = temp
+  }
+
+  const profiles: PairActivationProfile[] = Array.from({ length }, () => ({
+    partnerIndex: 0,
+    phase: 0,
+    gain: 1,
+    gate: 0.6,
+  }))
+
+  for (let index = 0; index < indexes.length; index += 2) {
+    const left = indexes[index]
+    const right = indexes[index + 1] ?? left
+    const phase = random() * Math.PI * 2
+    const gain = 0.9 + (random() * 0.4)
+    const gate = 0.48 + (random() * 0.34)
+
+    profiles[left] = { partnerIndex: right, phase, gain, gate }
+    profiles[right] = { partnerIndex: left, phase, gain, gate }
+  }
+
+  return profiles
+}
+
+function pairedSyncEnergy(
+  index: number,
+  profiles: PairActivationProfile[],
+  motionStep: number,
+  pulse: number,
+  beat: number,
+  transient: number,
+): number {
+  const profile = profiles[index]
+  if (!profile) return 0
+  const base = 0.5 + (Math.sin((motionStep * 0.094) + profile.phase + ((pulse + beat) * 3.4)) * 0.5)
+  const gateOpen = base > profile.gate ? 1 : 0.28
+  const excitation = clamp01((pulse * 0.34) + (beat * 0.38) + (transient * 0.28))
+  return clamp01((base * gateOpen * profile.gain) * (0.52 + (excitation * 0.88)))
+}
+
 function randomPoint(points: LatLng[]): LatLng {
   return points[Math.floor(Math.random() * points.length)]
 }
@@ -500,6 +721,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
 
   const gridLayer = L.layerGroup().addTo(map)
   const meshLayer = L.layerGroup().addTo(map)
+  const octaneV7Layer = L.layerGroup().addTo(map)
   const reactiveMeshLayer = L.layerGroup().addTo(map)
   const ambientDotLayer = L.layerGroup().addTo(map)
   const trafficLayer = L.layerGroup().addTo(map)
@@ -524,6 +746,12 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
   let routeAudioProfiles: WireAudioProfile[] = []
   let alertRingProfiles: RingAudioProfile[] = []
   let trafficAudioProfiles: TrafficAudioProfile[] = []
+  let gridPairProfiles: PairActivationProfile[] = []
+  let routePairProfiles: PairActivationProfile[] = []
+  let ambientPairProfiles: PairActivationProfile[] = []
+  let dataCenterPairProfiles: PairActivationProfile[] = []
+  const octaneV7Profiles: OctaneV7SimulationProfile[] = []
+  let octaneV7Tick = 0
 
   let audioReactiveEnabled = false
   let audioReactiveLevel = 0
@@ -597,6 +825,11 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
           opacity: 0,
         })
       })
+
+      octaneV7Profiles.forEach((profile) => {
+        profile.outer.setStyle({ opacity: 0, fillOpacity: 0, weight: 0 })
+        profile.inner.setStyle({ opacity: 0, fillOpacity: 0 })
+      })
     }
 
     if (visible) {
@@ -637,6 +870,20 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
         })
       })
 
+      octaneV7Profiles.forEach((profile) => {
+        profile.outer.setRadius(profile.baseRadiusMeters)
+        profile.outer.setStyle({
+          opacity: 0.14,
+          fillOpacity: 0.04,
+          weight: 0.9,
+        })
+        profile.inner.setRadius(profile.baseInnerRadius)
+        profile.inner.setStyle({
+          opacity: 0.76,
+          fillOpacity: 0.72,
+        })
+      })
+
       alertRingProfiles.forEach((profile) => {
         profile.ring.setRadius(profile.baseRadius)
         profile.ring.setStyle({
@@ -673,7 +920,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     continentMeshNodes.push(meshNode)
   })
 
-  const dataCenterById = new Map(DATA_CENTER_CITIES.map((city) => [city.id, city]))
+  const dataCenterById = new Map(WIREFRAME_CITIES.map((city) => [city.id, city]))
   const missingDataCenterIds = new Set<string>()
   const registerMissingId = (id: string) => {
     if (missingDataCenterIds.has(id)) return
@@ -729,7 +976,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     )
   })
 
-  DATA_CENTER_CITIES.forEach((city, index) => {
+  WIREFRAME_CITIES.forEach((city, index) => {
     const baseRadius = index % 4 === 0 ? 4.4 : 3.6
     const dot = L.circleMarker([city.lat, city.lng], {
       radius: baseRadius,
@@ -746,7 +993,74 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       baseRadius,
       phase: (index * 0.31) + (city.lat * 0.01),
     })
+
+    const baseRadiusMeters = 120_000 + ((index % 6) * 28_000)
+    const outer = L.circle([city.lat, city.lng], {
+      radius: baseRadiusMeters,
+      color: '#59f2ff',
+      fillColor: '#59f2ff',
+      fillOpacity: 0.04,
+      opacity: 0.14,
+      weight: 0.9,
+      interactive: false,
+      className: 'surveillance-octane-v7-ring',
+    }).addTo(octaneV7Layer)
+
+    const baseInnerRadius = 2.4 + ((index % 4) * 0.35)
+    const inner = L.circleMarker([city.lat, city.lng], {
+      radius: baseInnerRadius,
+      color: '#7bf8ff',
+      fillColor: '#cffdff',
+      fillOpacity: 0.72,
+      opacity: 0.76,
+      weight: 1,
+      interactive: false,
+      className: 'surveillance-octane-v7-core',
+    }).addTo(octaneV7Layer)
+
+    octaneV7Profiles.push({
+      outer,
+      inner,
+      baseRadiusMeters,
+      baseInnerRadius,
+      phase: (index * 0.23) + (city.lng * 0.01),
+      activationOffset: index % OCTANE_V7_ACTIVATION_BUCKETS,
+    })
   })
+  dataCenterPairProfiles = buildPairActivationProfiles(dataCenterDotProfiles.length, 211)
+
+  const updateOctaneV7Simulation = (advanceTick = false) => {
+    if (advanceTick) octaneV7Tick += 1
+    const nowSeconds = Date.now() / 1000
+    const pulse = audioReactiveEnabled ? clamp01(audioReactiveBands.pulse) : 0
+    const beat = audioReactiveEnabled ? clamp01(audioReactiveBands.beat) : 0
+    const flux = audioReactiveEnabled ? clamp01(audioReactiveBands.flux) : 0
+    const transient = audioReactiveEnabled ? clamp01(audioReactiveBands.transient) : 0
+    const audioEnergy = clamp01((pulse * 0.36) + (beat * 0.28) + (flux * 0.2) + (transient * 0.16) + (audioReactiveLevel * 0.22))
+
+    octaneV7Profiles.forEach((profile) => {
+      const wave = 0.5 + (Math.sin((nowSeconds * 1.6) + profile.phase) * 0.5)
+      const active = ((octaneV7Tick + profile.activationOffset) % OCTANE_V7_ACTIVATION_BUCKETS) === 0
+      const activeBoost = active ? 1 : 0
+      const audioRadiusBoost = audioEnergy * (0.06 + (pulse * 0.08) + (transient * 0.06))
+      const radiusScale = 1 + (activeBoost * (0.14 + (wave * 0.16))) + audioRadiusBoost
+
+      profile.outer.setRadius(profile.baseRadiusMeters * radiusScale)
+      profile.outer.setStyle({
+        opacity: wireframesVisible ? (0.1 + (activeBoost * 0.17) + (wave * 0.06) + (audioEnergy * 0.2)) : 0,
+        fillOpacity: wireframesVisible ? (0.03 + (activeBoost * 0.08) + (wave * 0.02) + (audioEnergy * 0.08)) : 0,
+        weight: wireframesVisible ? (0.8 + (activeBoost * 0.7) + (audioEnergy * 0.6)) : 0,
+      })
+
+      profile.inner.setRadius(profile.baseInnerRadius + (activeBoost * (1.8 + (wave * 1.4))) + (audioEnergy * (1.2 + (beat * 0.8))))
+      profile.inner.setStyle({
+        opacity: wireframesVisible ? (0.55 + (activeBoost * 0.36) + (wave * 0.06) + (audioEnergy * 0.24)) : 0,
+        fillOpacity: wireframesVisible ? (0.48 + (activeBoost * 0.4) + (wave * 0.08) + (audioEnergy * 0.3)) : 0,
+      })
+    })
+  }
+
+  updateOctaneV7Simulation()
 
   const pruneReactiveBursts = () => {
     const now = Date.now()
@@ -788,10 +1102,10 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       oldestBurst?.endDot.remove()
     }
 
-    const start = randomPoint(NETWORK_POINTS)
-    let end = randomPoint(NETWORK_POINTS)
+    const start = randomPoint(WIREFRAME_SIGNAL_POINTS)
+    let end = randomPoint(WIREFRAME_SIGNAL_POINTS)
     for (let guard = 0; guard < 3 && start === end; guard += 1) {
-      end = randomPoint(NETWORK_POINTS)
+      end = randomPoint(WIREFRAME_SIGNAL_POINTS)
     }
 
     const ttl = 620 + Math.round(820 * intensity)
@@ -848,7 +1162,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
   }
 
   const randomCoastPoint = (): LatLng => {
-    const source = randomPoint(NETWORK_POINTS)
+    const source = randomPoint(WIREFRAME_SIGNAL_POINTS)
     const lat = Math.max(WORLD_LAT_MIN, Math.min(WORLD_LAT_MAX, source[0] + ((Math.random() - 0.5) * 9.5)))
     const lngRaw = source[1] + ((Math.random() - 0.5) * 13)
     const lng = wrapLongitude(lngRaw)
@@ -856,10 +1170,10 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
   }
 
   const randomTransitPoint = (): LatLng => {
-    const start = randomPoint(NETWORK_POINTS)
-    let end = randomPoint(NETWORK_POINTS)
+    const start = randomPoint(WIREFRAME_SIGNAL_POINTS)
+    let end = randomPoint(WIREFRAME_SIGNAL_POINTS)
     for (let guard = 0; guard < 3 && start === end; guard += 1) {
-      end = randomPoint(NETWORK_POINTS)
+      end = randomPoint(WIREFRAME_SIGNAL_POINTS)
     }
     const route = curvedRoutePoints(start, end)
     const sample = route[Math.floor(Math.random() * route.length)]
@@ -911,21 +1225,23 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       const treble = 0.12 + (Math.random() * 0.78)
       ambientAudioDots.push(createAmbientAudioDot(intensity, pulse, beat, treble))
     }
+    ambientPairProfiles = buildPairActivationProfiles(ambientAudioDots.length, 307)
   }
 
-  const updateAmbientAudioDots = (loudness: number, tempo: number, treble: number, pulse: number): number => {
+  const updateAmbientAudioDots = (loudness: number, tempo: number, treble: number, pulse: number, beat: number, transient: number): number => {
     let activeCount = 0
     ambientAudioDots.forEach((entry, index) => {
       const strobe = 0.5 + (Math.sin((motionStep * entry.flashRate) + entry.phase + (index * 0.19)) * 0.5)
-      const intensity = clamp01((loudness * 0.46) + (tempo * 0.34) + (treble * 0.2) + (pulse * 0.24))
+      const pairSync = pairedSyncEnergy(index, ambientPairProfiles, motionStep, pulse, beat, transient)
+      const intensity = clamp01((loudness * 0.38) + (tempo * 0.24) + (treble * 0.14) + (pulse * 0.16) + (pairSync * 0.3))
       const isOn = (intensity + (strobe * 0.55)) > entry.threshold
       if (isOn) activeCount += 1
 
       entry.dot.setStyle({
         color: entry.color,
         fillColor: entry.fillColor,
-        opacity: isOn ? 0.9 : 0.02,
-        fillOpacity: isOn ? 0.86 : 0.015,
+        opacity: isOn ? Math.min(1, 0.72 + (pairSync * 0.28)) : 0.02,
+        fillOpacity: isOn ? Math.min(1, 0.66 + (pairSync * 0.34)) : 0.015,
       })
     })
 
@@ -1046,6 +1362,15 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     const transient = clamp01(audioReactiveBands.transient)
     const centroid = clamp01(audioReactiveBands.centroid)
 
+    updateOctaneV7Simulation()
+
+    if (motionStep % PAIR_RESHUFFLE_STEPS === 0) {
+      routePairProfiles = buildPairActivationProfiles(routeAudioProfiles.length, (motionStep * 13) + 17)
+      ambientPairProfiles = buildPairActivationProfiles(ambientAudioDots.length, (motionStep * 17) + 23)
+      dataCenterPairProfiles = buildPairActivationProfiles(dataCenterDotProfiles.length, (motionStep * 19) + 29)
+      gridPairProfiles = buildPairActivationProfiles(gridAudioProfiles.length, (motionStep * 11) + 31)
+    }
+
     if (basemapMode === 'traffic') {
       trafficBasemapTiles.setOpacity(Math.max(0.88, Math.min(1, 0.9 + (pulse * 0.06) + (flux * 0.04))))
       streetLabels.setOpacity(Math.max(0.78, Math.min(1, 0.84 + (presence * 0.08) + (transient * 0.04))))
@@ -1057,7 +1382,8 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     gridAudioProfiles.forEach((profile, index) => {
       if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
       const shimmer = 0.5 + (Math.sin((motionStep * 0.11) + profile.phase + (index * 0.12)) * 0.5)
-      const energy = clamp01((pulse * 0.22) + (flux * 0.22) + (centroid * 0.16) + (presence * 0.14) + (shimmer * 0.26))
+      const pairSync = pairedSyncEnergy(index, gridPairProfiles, motionStep, pulse, beat, transient)
+      const energy = clamp01((pulse * 0.16) + (flux * 0.18) + (centroid * 0.12) + (presence * 0.1) + (pairSync * 0.22) + (shimmer * 0.22))
       profile.line.setStyle({
         opacity: Math.max(0.12, Math.min(0.92, profile.baseOpacity + (energy * 0.34))),
         weight: Math.max(0.35, profile.baseWeight + (energy * 0.5)),
@@ -1093,7 +1419,8 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       dataCenterDotProfiles.forEach((profile, index) => {
         if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
         const shimmer = 0.5 + (Math.sin((motionStep * 0.14) + profile.phase + (index * 0.2)) * 0.5)
-        const cityEnergy = clamp01((pulse * 0.4) + (beat * 0.24) + (presence * 0.18) + (brilliance * 0.12) + (transient * 0.08) + (shimmer * 0.24))
+        const pairSync = pairedSyncEnergy(index, dataCenterPairProfiles, motionStep, pulse, beat, transient)
+        const cityEnergy = clamp01((pulse * 0.26) + (beat * 0.2) + (presence * 0.12) + (brilliance * 0.1) + (pairSync * 0.2) + (transient * 0.08) + (shimmer * 0.22))
         profile.dot.setRadius(profile.baseRadius + (cityEnergy * 2.8))
         profile.dot.setStyle({
           fillOpacity: 0.3 + (cityEnergy * 0.66),
@@ -1104,7 +1431,8 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       routeAudioProfiles.forEach((profile, index) => {
         if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
         const shimmer = 0.5 + (Math.sin((motionStep * 0.14) + profile.phase + (index * 0.17)) * 0.5)
-        const energy = clamp01((pulse * 0.36) + (beat * 0.2) + (subBass * 0.14) + (lowMid * 0.12) + (mid * 0.12) + (flux * 0.08) + (shimmer * 0.24))
+        const pairSync = pairedSyncEnergy(index, routePairProfiles, motionStep, pulse, beat, transient)
+        const energy = clamp01((pulse * 0.24) + (beat * 0.16) + (subBass * 0.12) + (lowMid * 0.1) + (mid * 0.1) + (pairSync * 0.22) + (flux * 0.08) + (shimmer * 0.2))
         const visibility = clamp01((energy * 1.18) - 0.2)
         profile.line.setStyle({
           opacity: 0.03 + (visibility * ((profile.baseOpacity * 0.9) + (0.5 * profile.intensity))),
@@ -1181,7 +1509,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
 
     const loudness = clamp01((audioReactiveLevel * 0.34) + (pulse * 0.22) + (subBass * 0.18) + (bass * 0.14) + (transient * 0.12))
     const tempo = clamp01((beat * 0.38) + (mid * 0.14) + (presence * 0.14) + (brilliance * 0.08) + (flux * 0.16) + (transient * 0.1))
-    updateAmbientAudioDots(loudness, tempo, treble, pulse)
+    updateAmbientAudioDots(loudness, tempo, treble, pulse, beat, transient)
     applyGlobalEventDotSizing(pulse, transient, flux)
 
     if (wireframesVisible) {
@@ -1201,6 +1529,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
 
   initializeAmbientAudioDots()
 
+  const octaneV7Timer = window.setInterval(() => updateOctaneV7Simulation(true), OCTANE_V7_ACTIVATION_INTERVAL_MS)
   const reactiveTimer = window.setInterval(updateReactiveMesh, AUDIO_UPDATE_INTERVAL_MS)
 
   for (let lat = -80; lat <= 80; lat += 20) {
@@ -1223,6 +1552,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     }).addTo(gridLayer)
     gridAudioProfiles.push({ line, baseOpacity: 0.4, baseWeight: 0.45, intensity: 0.7, phase: lon * 0.04 })
   }
+  gridPairProfiles = buildPairActivationProfiles(gridAudioProfiles.length, 101)
 
   let markers: CircleMarker[] = []
   let connections: Polyline[] = []
@@ -1345,6 +1675,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     subsystemRingAudioProfiles = []
     geoRingAudioProfiles = []
     routeAudioProfiles = []
+    routePairProfiles = []
     alertRingProfiles = []
     trafficAudioProfiles = []
 
@@ -1427,6 +1758,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
         })
       }
     }
+    routePairProfiles = buildPairActivationProfiles(routeAudioProfiles.length, (nodes.length * 37) + (alerts.length * 13) + 19)
 
     subsystems.forEach((subsystem: VisualizationSubsystem) => {
       const load = Math.max(0, Math.min(1, subsystem.load))
@@ -1688,6 +2020,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       return { x: point.x, y: point.y }
     },
     destroy: () => {
+      window.clearInterval(octaneV7Timer)
       window.clearInterval(reactiveTimer)
       reactiveBursts.forEach((burst) => {
         burst.line.remove()
@@ -1695,6 +2028,11 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
         burst.endDot.remove()
       })
       reactiveBursts.length = 0
+      octaneV7Profiles.forEach((profile) => {
+        profile.outer.remove()
+        profile.inner.remove()
+      })
+      octaneV7Profiles.length = 0
       ambientAudioDots.forEach((entry) => {
         entry.dot.remove()
       })
