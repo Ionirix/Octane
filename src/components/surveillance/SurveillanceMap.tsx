@@ -535,7 +535,6 @@ export function SurveillanceMap({
                 style={{
                   ['--target-color' as string]: target.color,
                   ['--target-angle' as string]: `${target.baseAngle + target.audioTwistDeg}deg`,
-                  ['--target-scale' as string]: String(target.audioScale),
                 }}
               >
                 <div className="surveillance-target-reticle-inner" />

@@ -378,7 +378,7 @@
   box-shadow:
     0 0 16px color-mix(in srgb, var(--target-color) 62%, transparent),
     inset 0 0 13px color-mix(in srgb, var(--target-color) 36%, transparent);
-  transform: rotate(var(--target-angle)) scale(var(--target-scale, 1));
+  transform: rotate(var(--target-angle));
   opacity: 0.86;
 }
 
@@ -496,6 +496,10 @@
   animation: surveillance-target-entry 620ms ease-out forwards;
 }
 
+.surveillance-target-lock--live .surveillance-target-reticle {
+  animation: surveillance-target-live-rotate 2.2s linear infinite;
+}
+
 .surveillance-target-lock--entry .surveillance-target-reticle-inner {
   animation-duration: 0.52s;
 }
@@ -578,53 +582,52 @@
 
 @keyframes surveillance-target-entry {
   0% {
-    transform: scale(0.54) rotate(calc(var(--target-angle) - 24deg));
-    opacity: 0;
+    transform: rotate(calc(var(--target-angle) - 24deg));
   }
   55% {
-    transform: scale(1.08) rotate(calc(var(--target-angle) + 8deg));
-    opacity: 0.95;
+    transform: rotate(calc(var(--target-angle) + 8deg));
   }
   100% {
-    transform: scale(1) rotate(var(--target-angle));
-    opacity: 0.86;
+    transform: rotate(var(--target-angle));
+  }
+}
+
+@keyframes surveillance-target-live-rotate {
+  from {
+    transform: rotate(var(--target-angle));
+  }
+  to {
+    transform: rotate(calc(var(--target-angle) + 360deg));
   }
 }
 
 @keyframes surveillance-target-acquire-spin {
   0% {
-    transform: scale(0.92) rotate(calc(var(--target-angle) - 20deg));
-    opacity: 0.65;
+    transform: rotate(calc(var(--target-angle) - 20deg));
   }
   45% {
-    transform: scale(1.05) rotate(calc(var(--target-angle) + 5deg));
-    opacity: 1;
+    transform: rotate(calc(var(--target-angle) + 5deg));
   }
   100% {
-    transform: scale(1) rotate(var(--target-angle));
-    opacity: 0.88;
+    transform: rotate(var(--target-angle));
   }
 }
 
 @keyframes surveillance-target-dwell {
   0%, 100% {
-    transform: scale(1) rotate(var(--target-angle));
-    opacity: 0.82;
+    transform: rotate(var(--target-angle));
   }
   50% {
-    transform: scale(1.035) rotate(calc(var(--target-angle) + 2deg));
-    opacity: 1;
+    transform: rotate(calc(var(--target-angle) + 2deg));
   }
 }
 
 @keyframes surveillance-target-exit {
   from {
-    transform: scale(1) rotate(var(--target-angle));
-    opacity: 0.84;
+    transform: rotate(var(--target-angle));
   }
   to {
-    transform: scale(0.6) rotate(calc(var(--target-angle) + 28deg));
-    opacity: 0;
+    transform: rotate(calc(var(--target-angle) + 28deg));
   }
 }
 
@@ -635,16 +638,13 @@
 
 @keyframes surveillance-target-resolved-flash {
   0% {
-    transform: scale(0.95) rotate(var(--target-angle));
-    opacity: 0.15;
+    transform: rotate(var(--target-angle));
   }
   35% {
-    transform: scale(1.1) rotate(calc(var(--target-angle) + 10deg));
-    opacity: 1;
+    transform: rotate(calc(var(--target-angle) + 10deg));
   }
   100% {
-    transform: scale(1) rotate(var(--target-angle));
-    opacity: 0;
+    transform: rotate(var(--target-angle));
   }
 }
 
