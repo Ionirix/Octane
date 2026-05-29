@@ -55,6 +55,8 @@ function createMockEnv() {
     SELF_HEALING_DNS_ENDPOINT: 'https://dns.adapter.local/execute',
     SELF_HEALING_CDN_ENDPOINT: 'https://cdn.adapter.local/execute',
     SELF_HEALING_LB_ENDPOINT: 'https://lb.adapter.local/execute',
+    SELF_HEALING_CELL_TOWER_ENDPOINT: 'https://cell-tower.adapter.local/execute',
+    SELF_HEALING_CELL_ACTIVITY_ENDPOINT: 'https://cell-activity.adapter.local/execute',
     SELF_HEALING_INCIDENT_ENDPOINT: 'https://incident.adapter.local/execute',
   }
 
@@ -202,5 +204,57 @@ describe('self-healing lifecycle routes', () => {
     expect(rollbackRes.status).toBe(200)
     const rolledBack = await rollbackRes.json() as { data: { status: string } }
     expect(rolledBack.data.status).toBe('rolled_back')
+  })
+
+  it('executes targeted self-healing against authorized cell domains', async () => {
+    const env = createMockEnv()
+
+    const createRes = await selfHealingRouter.request('/active-nodes/heal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dryRun: false,
+        playbookId: 'playbook-targeted-cell-self-healing',
+      }),
+    }, env)
+    expect(createRes.status).toBe(201)
+    const created = await createRes.json() as { data: { operation: { id: string } } }
+
+    const approveHeaders = await signedHeaders({
+      method: 'POST',
+      path: `/active-nodes/operations/${created.data.operation.id}/approve`,
+      actor: 'alice-operator',
+      role: 'operator',
+      secret: 'test-signing-secret',
+    })
+    const approveRes = await selfHealingRouter.request(`/active-nodes/operations/${created.data.operation.id}/approve`, {
+      method: 'POST',
+      headers: approveHeaders,
+      body: JSON.stringify({}),
+    }, env)
+    expect(approveRes.status).toBe(200)
+
+    const executeHeaders = await signedHeaders({
+      method: 'POST',
+      path: `/active-nodes/operations/${created.data.operation.id}/execute`,
+      actor: 'alice-operator',
+      role: 'operator',
+      secret: 'test-signing-secret',
+    })
+    const executeRes = await selfHealingRouter.request(`/active-nodes/operations/${created.data.operation.id}/execute`, {
+      method: 'POST',
+      headers: executeHeaders,
+      body: JSON.stringify({}),
+    }, env)
+    expect(executeRes.status).toBe(200)
+
+    const executed = await executeRes.json() as {
+      data: {
+        controlPlane: { results: Array<{ domain: string }> }
+      }
+    }
+    const domains = new Set(executed.data.controlPlane.results.map((result) => result.domain))
+    expect(domains.has('cell-tower')).toBe(true)
+    expect(domains.has('cell-activity')).toBe(true)
   })
 })

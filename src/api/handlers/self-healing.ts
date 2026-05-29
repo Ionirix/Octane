@@ -36,7 +36,7 @@ type HealthNodeLocation = {
 type ActiveHealthNode = HealthNodeLocation & {
   mission: string;
   activeSince: number;
-  capability: 'dns-reconcile' | 'route-failover' | 'edge-capacity-shift' | 'incident-isolation';
+  capability: 'dns-reconcile' | 'route-failover' | 'edge-capacity-shift' | 'incident-isolation' | 'cell-tower-recovery' | 'cell-activity-rebalance';
 };
 
 type HealingPlaybook = {
@@ -166,7 +166,14 @@ const HEALTH_NODE_LOCATIONS: HealthNodeLocation[] = [
 
 function rotateTier(pool: HealthNodeLocation[], start: number, count: number, activeSince: number): ActiveHealthNode[] {
   if (pool.length === 0 || count <= 0) return [];
-  const capabilities: ActiveHealthNode['capability'][] = ['dns-reconcile', 'route-failover', 'edge-capacity-shift', 'incident-isolation'];
+  const capabilities: ActiveHealthNode['capability'][] = [
+    'dns-reconcile',
+    'route-failover',
+    'edge-capacity-shift',
+    'incident-isolation',
+    'cell-tower-recovery',
+    'cell-activity-rebalance',
+  ];
   const active: ActiveHealthNode[] = [];
   for (let index = 0; index < count; index += 1) {
     const node = pool[(start + index) % pool.length];
@@ -380,6 +387,18 @@ function buildPlaybooks(posture: { activeAlerts: number; criticalAlerts: number;
       requiresApproval: true,
     },
     {
+      id: 'playbook-targeted-cell-self-healing',
+      title: 'Targeted Self-Healing for Cell Surface',
+      summary: 'Apply operator-approved remediation to authorized cell towers and cell activity lanes without broad network disruption.',
+      trigger: 'Localized tower degradation, handoff instability, or mobility corridor saturation.',
+      actions: [
+        'Validate authorized tower groups and active cell activity lanes before applying changes.',
+        'Shift sector load and retune allowed radio/cell policies in bounded regions only.',
+        'Confirm handoff stability and rollback targeted adjustments if guardrails are breached.',
+      ],
+      requiresApproval: true,
+    },
+    {
       id: 'playbook-incident-isolation',
       title: 'Incident Isolation + Safe Degradation',
       summary: 'Isolate unstable segments and preserve core service availability with graceful degradation.',
@@ -395,7 +414,7 @@ function buildPlaybooks(posture: { activeAlerts: number; criticalAlerts: number;
 
   if (!posture) return base;
   if (posture.criticalAlerts >= 3 || posture.degradedNodes >= 3) return base;
-  return [base[1], base[0], base[2]];
+  return [base[1], base[0], base[3], base[2]];
 }
 
 async function getRecentMarkers(env: Env, limit: number): Promise<PeaceMarkerRecord[]> {
@@ -436,6 +455,7 @@ selfHealingRouter.get('/active-nodes', async (c) => {
     data: {
       capabilityMode: 'operator-assist',
       guardrail: 'Only execute actions on infrastructure you own or are explicitly authorized to operate.',
+      authorizedTargets: ['self-healing', 'internet-healing', 'targeted-self-healing', 'cell-towers', 'cell-activity'],
       rotationMs: HEALTH_NODE_ROTATION_MS,
       poolSize: HEALTH_NODE_LOCATIONS.length,
       activeNodes: getActiveHealthNodes(at),

@@ -26,6 +26,8 @@ ISSUE_DATE           = "2026-05-23"
 CLASSIFICATION       = "Sovereign-Eyes Only"
 V7_INTEL_UPSTREAM_BASE_URL = "https://8b39333f.octane-v7.pages.dev"
 V7_INTEL_UPSTREAM_RETRIES = 1
+SELF_HEALING_CELL_TOWER_ENDPOINT = "https://cell-tower.adapter.local/execute"
+SELF_HEALING_CELL_ACTIVITY_ENDPOINT = "https://cell-activity.adapter.local/execute"
 
 [[kv_namespaces]]
 binding     = "EXISTENCE_LATTICE_KV"

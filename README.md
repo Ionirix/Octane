@@ -44,6 +44,20 @@ Worker bindings:
 - `V7_INTEL_UPSTREAM_RETRIES` (optional)
 - `V7_INTEL_UPSTREAM_TOKEN` (optional secret)
 
+Self-healing bindings:
+
+- `SELF_HEALING_CELL_TOWER_ENDPOINT` (cell tower remediation adapter endpoint)
+- `SELF_HEALING_CELL_ACTIVITY_ENDPOINT` (cell activity remediation adapter endpoint)
+- `SELF_HEALING_CELL_TOWER_TOKEN` (secret token)
+- `SELF_HEALING_CELL_ACTIVITY_TOKEN` (secret token)
+
+Set the new self-healing secrets with Wrangler:
+
+```bash
+wrangler secret put SELF_HEALING_CELL_TOWER_TOKEN
+wrangler secret put SELF_HEALING_CELL_ACTIVITY_TOKEN
+```
+
 ### Deploy (unchanged for v6)
 
 ```bash

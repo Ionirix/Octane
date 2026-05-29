@@ -1,6 +1,6 @@
 import type { Env } from '../../types/index.js'
 
-type ControlPlaneDomain = 'dns' | 'cdn' | 'load-balancer' | 'incident'
+type ControlPlaneDomain = 'dns' | 'cdn' | 'load-balancer' | 'incident' | 'cell-tower' | 'cell-activity'
 
 type DomainConfig = {
   endpoint?: string
@@ -25,9 +25,10 @@ export type AdapterExecutionResult = {
 }
 
 const PLAYBOOK_DOMAINS: Record<string, ControlPlaneDomain[]> = {
-  'playbook-route-failover': ['load-balancer', 'cdn'],
-  'playbook-dns-reconcile': ['dns'],
-  'playbook-incident-isolation': ['incident', 'load-balancer'],
+  'playbook-route-failover': ['load-balancer', 'cdn', 'cell-tower'],
+  'playbook-dns-reconcile': ['dns', 'cell-activity'],
+  'playbook-targeted-cell-self-healing': ['cell-tower', 'cell-activity', 'incident'],
+  'playbook-incident-isolation': ['incident', 'load-balancer', 'cell-activity'],
 }
 
 function configForDomain(env: Env, domain: ControlPlaneDomain): DomainConfig {
@@ -39,6 +40,12 @@ function configForDomain(env: Env, domain: ControlPlaneDomain): DomainConfig {
   }
   if (domain === 'load-balancer') {
     return { endpoint: env.SELF_HEALING_LB_ENDPOINT, token: env.SELF_HEALING_LB_TOKEN }
+  }
+  if (domain === 'cell-tower') {
+    return { endpoint: env.SELF_HEALING_CELL_TOWER_ENDPOINT, token: env.SELF_HEALING_CELL_TOWER_TOKEN }
+  }
+  if (domain === 'cell-activity') {
+    return { endpoint: env.SELF_HEALING_CELL_ACTIVITY_ENDPOINT, token: env.SELF_HEALING_CELL_ACTIVITY_TOKEN }
   }
   return { endpoint: env.SELF_HEALING_INCIDENT_ENDPOINT, token: env.SELF_HEALING_INCIDENT_TOKEN }
 }
