@@ -21,6 +21,8 @@ type MapController = {
   setViewportChangeHandler: (handler?: (bbox: string) => void) => void
   setAudioReactive: (enabled: boolean, level?: number, bands?: AudioReactiveBands) => void
   setWireframesVisible: (visible: boolean) => void
+  getZoom: () => number
+  getViewportSpan: () => { latSpan: number; lngSpan: number }
   projectLatLng: (lat: number, lng: number) => { x: number; y: number } | null
   destroy: () => void
 }
@@ -28,9 +30,16 @@ type MapController = {
 type LatLng = [number, number]
 
 type AudioReactiveBands = {
+  subBass: number
   bass: number
+  lowMid: number
   mid: number
+  presence: number
   treble: number
+  brilliance: number
+  flux: number
+  transient: number
+  centroid: number
   pulse: number
   beat: number
 }
@@ -92,16 +101,6 @@ type TrafficSegmentStyle = {
 
 type GlobalEventCategory = 'traffic' | 'weather' | 'wildfire' | 'police' | 'service'
 
-const GLOBAL_EVENT_CATEGORIES: GlobalEventCategory[] = ['traffic', 'weather', 'wildfire', 'police', 'service']
-
-const CATEGORY_BEACON_POINTS: Record<GlobalEventCategory, LatLng> = {
-  traffic: [40.7128, -74.006],
-  weather: [35.6762, 139.6503],
-  wildfire: [34.0522, -118.2437],
-  police: [51.5074, -0.1278],
-  service: [25.2048, 55.2708],
-}
-
 type GlobalEventDotProfile = {
   dot: CircleMarker
   baseRadius: number
@@ -121,6 +120,15 @@ type DataCenterDotProfile = {
   dot: CircleMarker
   baseRadius: number
   phase: number
+}
+
+type TrafficAudioProfile = {
+  line: Polyline
+  baseOpacity: number
+  baseWeight: number
+  congestion: number
+  phase: number
+  roadClass: VisualizationTrafficSegment['roadClass']
 }
 
 const GLOBAL_EVENT_DOT_COLORS: Record<GlobalEventCategory, { stroke: string; fill: string; label: string }> = {
@@ -421,7 +429,7 @@ function normalizeAlertCategoryFromAlert(alert: VisualizationAlert): GlobalEvent
 }
 
 export function initMap(container: HTMLElement, config: VisualizationConfig): MapController {
-  const WORLD_BOUNDS: [[number, number], [number, number]] = [[-68, -180], [82, 180]]
+  const WORLD_BOUNDS: [[number, number], [number, number]] = [[-80, -180], [80, 180]]
   const WORLD_LAT_MIN = WORLD_BOUNDS[0][0]
   const WORLD_LAT_MAX = WORLD_BOUNDS[1][0]
   const map = L.map(container, {
@@ -429,9 +437,27 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     attributionControl: false,
     minZoom: config.minZoom,
     maxZoom: Math.max(config.maxZoom, 19),
+    maxBounds: WORLD_BOUNDS,
+    maxBoundsViscosity: 1,
     preferCanvas: true,
     worldCopyJump: true,
   }).setView([20, 0], 2)
+
+  let minViewportZoom = config.minZoom
+
+  const syncMinZoomToBounds = () => {
+    // Prevent zooming out beyond the full wireframe/world envelope.
+    const fittedZoom = map.getBoundsZoom(WORLD_BOUNDS, false, L.point(0, 0))
+    if (!Number.isFinite(fittedZoom)) return
+
+    const nextMinZoom = Math.max(config.minZoom, Math.min(map.getMaxZoom(), fittedZoom))
+    minViewportZoom = nextMinZoom
+    map.setMinZoom(nextMinZoom)
+
+    if (map.getZoom() < nextMinZoom) {
+      map.setZoom(nextMinZoom, { animate: false })
+    }
+  }
 
   map.createPane('traffic-flow-pane')
   const trafficPane = map.getPane('traffic-flow-pane')
@@ -497,10 +523,24 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
   let geoRingAudioProfiles: GeoAudioProfile[] = []
   let routeAudioProfiles: WireAudioProfile[] = []
   let alertRingProfiles: RingAudioProfile[] = []
+  let trafficAudioProfiles: TrafficAudioProfile[] = []
 
   let audioReactiveEnabled = false
   let audioReactiveLevel = 0
-  let audioReactiveBands: AudioReactiveBands = { bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 }
+  let audioReactiveBands: AudioReactiveBands = {
+    subBass: 0,
+    bass: 0,
+    lowMid: 0,
+    mid: 0,
+    presence: 0,
+    treble: 0,
+    brilliance: 0,
+    flux: 0,
+    transient: 0,
+    centroid: 0,
+    pulse: 0,
+    beat: 0,
+  }
   let motionStep = 0
   let wireframesVisible = true
   let queuedBurstSpawns = 0
@@ -907,19 +947,24 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     return 3.05
   }
 
-  const applyGlobalEventDotSizing = () => {
+  const applyGlobalEventDotSizing = (audioPulse = 0, audioTransient = 0, audioFlux = 0) => {
     const zoom = map.getZoom()
     const zoomBase = baseGlobalEventDotRadius(zoom)
     globalEventDotProfiles.forEach((profile, index) => {
       const notifying = 0.5 + (Math.sin((motionStep * 0.12) + profile.phase + (index * 0.19)) * 0.5)
       const categoryBoost = profile.category === 'wildfire' ? 0.24 : profile.category === 'police' ? 0.18 : 0.12
-      const radius = zoomBase + ((profile.baseRadius - 1.8) * 0.24) + (profile.severityFactor * 0.28) + ((notifying + categoryBoost) * 0.44)
+      const audioBoost = (audioPulse * 0.26) + (audioTransient * 0.2) + (audioFlux * 0.12)
+      const radius = zoomBase + ((profile.baseRadius - 1.8) * 0.24) + (profile.severityFactor * 0.28) + ((notifying + categoryBoost + audioBoost) * 0.44)
       profile.dot.setRadius(Math.max(1.5, Math.min(4.2, radius)))
       profile.dot.setStyle({
-        opacity: 0.5 + (notifying * 0.44),
-        fillOpacity: 0.46 + (notifying * 0.42),
+        opacity: 0.44 + (notifying * 0.32) + (audioBoost * 0.22),
+        fillOpacity: 0.4 + (notifying * 0.3) + (audioBoost * 0.24),
       })
     })
+  }
+
+  const onZoomEndUpdateDots = () => {
+    applyGlobalEventDotSizing(audioReactiveBands.pulse, audioReactiveBands.transient, audioReactiveBands.flux)
   }
 
   const updateReactiveMesh = () => {
@@ -948,6 +993,19 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     if (!audioReactiveEnabled) {
       queuedBurstSpawns = 0
       if (reactiveBursts.length > 0) pruneReactiveBursts()
+      setBasemap(basemapMode)
+      trafficAudioProfiles.forEach((profile) => {
+        profile.line.setStyle({
+          opacity: profile.baseOpacity,
+          weight: profile.baseWeight,
+        })
+      })
+      gridAudioProfiles.forEach((profile) => {
+        profile.line.setStyle({
+          opacity: profile.baseOpacity,
+          weight: profile.baseWeight,
+        })
+      })
       nodeMarkerProfiles.forEach((profile) => {
         profile.marker.setRadius(profile.baseRadius)
         profile.marker.setStyle({
@@ -970,16 +1028,41 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
           fillOpacity: profile.baseFillOpacity,
         })
       })
-      if (globalEventDotProfiles.length > 0) applyGlobalEventDotSizing()
+      if (globalEventDotProfiles.length > 0) applyGlobalEventDotSizing(0, 0, 0)
       return
     }
 
     // --- Audio-reactive path ---
     const pulse = clamp01((audioReactiveBands.pulse * 0.7) + (audioReactiveLevel * 0.3))
     const beat = clamp01(audioReactiveBands.beat)
+    const subBass = clamp01(audioReactiveBands.subBass)
     const bass = clamp01(audioReactiveBands.bass)
+    const lowMid = clamp01(audioReactiveBands.lowMid)
     const mid = clamp01(audioReactiveBands.mid)
+    const presence = clamp01(audioReactiveBands.presence)
     const treble = clamp01(audioReactiveBands.treble)
+    const brilliance = clamp01(audioReactiveBands.brilliance)
+    const flux = clamp01(audioReactiveBands.flux)
+    const transient = clamp01(audioReactiveBands.transient)
+    const centroid = clamp01(audioReactiveBands.centroid)
+
+    if (basemapMode === 'traffic') {
+      trafficBasemapTiles.setOpacity(Math.max(0.88, Math.min(1, 0.9 + (pulse * 0.06) + (flux * 0.04))))
+      streetLabels.setOpacity(Math.max(0.78, Math.min(1, 0.84 + (presence * 0.08) + (transient * 0.04))))
+    } else {
+      satelliteTiles.setOpacity(Math.max(0.88, Math.min(1, 0.9 + (pulse * 0.06) + (brilliance * 0.05))))
+      streetLabels.setOpacity(Math.max(0.72, Math.min(0.92, 0.8 + (presence * 0.08) + (transient * 0.04))))
+    }
+
+    gridAudioProfiles.forEach((profile, index) => {
+      if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
+      const shimmer = 0.5 + (Math.sin((motionStep * 0.11) + profile.phase + (index * 0.12)) * 0.5)
+      const energy = clamp01((pulse * 0.22) + (flux * 0.22) + (centroid * 0.16) + (presence * 0.14) + (shimmer * 0.26))
+      profile.line.setStyle({
+        opacity: Math.max(0.12, Math.min(0.92, profile.baseOpacity + (energy * 0.34))),
+        weight: Math.max(0.35, profile.baseWeight + (energy * 0.5)),
+      })
+    })
 
     // Skip grid line updates — too many elements (30+) and barely visible under tiles.
     // Stagger mesh, routes, and ring updates so pulse spikes do not update every element at once.
@@ -1010,7 +1093,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       dataCenterDotProfiles.forEach((profile, index) => {
         if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
         const shimmer = 0.5 + (Math.sin((motionStep * 0.14) + profile.phase + (index * 0.2)) * 0.5)
-        const cityEnergy = clamp01((pulse * 0.54) + (beat * 0.3) + (treble * 0.18) + (shimmer * 0.24))
+        const cityEnergy = clamp01((pulse * 0.4) + (beat * 0.24) + (presence * 0.18) + (brilliance * 0.12) + (transient * 0.08) + (shimmer * 0.24))
         profile.dot.setRadius(profile.baseRadius + (cityEnergy * 2.8))
         profile.dot.setStyle({
           fillOpacity: 0.3 + (cityEnergy * 0.66),
@@ -1021,7 +1104,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       routeAudioProfiles.forEach((profile, index) => {
         if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
         const shimmer = 0.5 + (Math.sin((motionStep * 0.14) + profile.phase + (index * 0.17)) * 0.5)
-        const energy = clamp01((pulse * 0.56) + (beat * 0.34) + (mid * 0.2) + (shimmer * 0.26))
+        const energy = clamp01((pulse * 0.36) + (beat * 0.2) + (subBass * 0.14) + (lowMid * 0.12) + (mid * 0.12) + (flux * 0.08) + (shimmer * 0.24))
         const visibility = clamp01((energy * 1.18) - 0.2)
         profile.line.setStyle({
           opacity: 0.03 + (visibility * ((profile.baseOpacity * 0.9) + (0.5 * profile.intensity))),
@@ -1033,7 +1116,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     nodeMarkerProfiles.forEach((profile, index) => {
       if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
       const shimmer = 0.5 + (Math.sin((motionStep * 0.18) + profile.phase + (index * 0.27)) * 0.5)
-      const nodeEnergy = clamp01((pulse * 0.45) + (beat * 0.34) + (mid * 0.2) + (shimmer * 0.22) + profile.statusBoost)
+      const nodeEnergy = clamp01((pulse * 0.34) + (beat * 0.2) + (subBass * 0.14) + (mid * 0.1) + (presence * 0.08) + (transient * 0.08) + (shimmer * 0.2) + profile.statusBoost)
       profile.marker.setRadius(profile.baseRadius + (nodeEnergy * 2.5))
       profile.marker.setStyle({
         opacity: Math.min(1, profile.baseOpacity + (nodeEnergy * 0.18)),
@@ -1044,7 +1127,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     latencyRingAudioProfiles.forEach((profile, index) => {
       if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
       const shimmer = 0.5 + (Math.sin((motionStep * 0.15) + profile.phase + (index * 0.21)) * 0.5)
-      const ringEnergy = clamp01((pulse * 0.4) + (bass * 0.3) + (mid * 0.2) + (shimmer * 0.22))
+      const ringEnergy = clamp01((pulse * 0.3) + (subBass * 0.2) + (bass * 0.14) + (lowMid * 0.12) + (transient * 0.08) + (shimmer * 0.2))
       profile.ring.setRadius(profile.baseRadius + (ringEnergy * 6.4))
       profile.ring.setStyle({
         opacity: 0.22 + (ringEnergy * 0.56),
@@ -1055,7 +1138,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     subsystemRingAudioProfiles.forEach((profile, index) => {
       if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
       const shimmer = 0.5 + (Math.sin((motionStep * 0.17) + profile.phase + (index * 0.18)) * 0.5)
-      const ringEnergy = clamp01((pulse * 0.36) + (beat * 0.34) + (treble * 0.24) + (shimmer * 0.18))
+      const ringEnergy = clamp01((pulse * 0.24) + (beat * 0.2) + (presence * 0.16) + (treble * 0.14) + (brilliance * 0.1) + (flux * 0.08) + (shimmer * 0.18))
       profile.ring.setRadius(profile.baseRadius + (ringEnergy * 7.8))
       profile.ring.setStyle({
         opacity: 0.3 + (ringEnergy * 0.62),
@@ -1066,7 +1149,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     geoRingAudioProfiles.forEach((profile, index) => {
       if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
       const shimmer = 0.5 + (Math.sin((motionStep * 0.1) + profile.phase + (index * 0.14)) * 0.5)
-      const geoEnergy = clamp01((pulse * 0.3) + (mid * 0.28) + (treble * 0.2) + (shimmer * 0.22))
+      const geoEnergy = clamp01((pulse * 0.22) + (mid * 0.14) + (presence * 0.16) + (treble * 0.1) + (centroid * 0.1) + (flux * 0.08) + (shimmer * 0.2))
       profile.ring.setRadius(profile.baseRadiusMeters * (1 + (geoEnergy * 0.018)))
       profile.ring.setStyle({
         opacity: Math.min(0.86, profile.baseOpacity + (geoEnergy * 0.32)),
@@ -1077,7 +1160,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     alertRingProfiles.forEach((profile, index) => {
       if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
       const shimmer = 0.5 + (Math.sin((motionStep * 0.22) + profile.phase + (index * 0.31)) * 0.5)
-      const ringEnergy = clamp01((beat * 0.52) + (pulse * 0.34) + (treble * 0.22) + (shimmer * 0.24))
+      const ringEnergy = clamp01((beat * 0.3) + (pulse * 0.22) + (transient * 0.18) + (presence * 0.14) + (treble * 0.1) + (shimmer * 0.2))
       profile.ring.setRadius(profile.baseRadius + (ringEnergy * 8.2))
       profile.ring.setStyle({
         opacity: 0.08 + (ringEnergy * 0.86),
@@ -1085,10 +1168,21 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       })
     })
 
-    const loudness = clamp01((audioReactiveLevel * 0.45) + (pulse * 0.35) + (bass * 0.2))
-    const tempo = clamp01((beat * 0.65) + (mid * 0.2) + (treble * 0.15))
+    trafficAudioProfiles.forEach((profile, index) => {
+      if ((index % WIREFRAME_STAGGER_BUCKETS) !== staggerBucket) return
+      const shimmer = 0.5 + (Math.sin((motionStep * 0.2) + profile.phase + (index * 0.16)) * 0.5)
+      const roadBoost = profile.roadClass === 'highway' ? 0.2 : profile.roadClass === 'arterial' ? 0.14 : 0.08
+      const energy = clamp01((pulse * 0.28) + (beat * 0.2) + (transient * 0.16) + (flux * 0.14) + (profile.congestion * 0.18) + roadBoost + (shimmer * 0.16))
+      profile.line.setStyle({
+        opacity: Math.max(0.28, Math.min(0.98, profile.baseOpacity + (energy * 0.24))),
+        weight: Math.max(1.4, profile.baseWeight + (energy * 1.7)),
+      })
+    })
+
+    const loudness = clamp01((audioReactiveLevel * 0.34) + (pulse * 0.22) + (subBass * 0.18) + (bass * 0.14) + (transient * 0.12))
+    const tempo = clamp01((beat * 0.38) + (mid * 0.14) + (presence * 0.14) + (brilliance * 0.08) + (flux * 0.16) + (transient * 0.1))
     updateAmbientAudioDots(loudness, tempo, treble, pulse)
-    applyGlobalEventDotSizing()
+    applyGlobalEventDotSizing(pulse, transient, flux)
 
     if (wireframesVisible) {
       const performancePressure = clamp01((reactiveBursts.length / MAX_REACTIVE_BURSTS) * 0.65)
@@ -1157,7 +1251,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
 
   map.on('dragstart', markUserNavigation)
   map.on('zoomstart', markUserNavigation)
-  map.on('zoomend', applyGlobalEventDotSizing)
+  map.on('zoomend', onZoomEndUpdateDots)
   map.on('moveend', emitViewportChange)
   map.on('zoomend', emitViewportChange)
 
@@ -1203,6 +1297,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
   const forceFullSize = () => {
     // Leaflet can initialize with stale dimensions when parent layout is still settling.
     map.invalidateSize({ pan: false, animate: false })
+    syncMinZoomToBounds()
   }
 
   const resizeObserver = new ResizeObserver(() => {
@@ -1251,7 +1346,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
     geoRingAudioProfiles = []
     routeAudioProfiles = []
     alertRingProfiles = []
-    const renderedCategories = new Set<GlobalEventCategory>()
+    trafficAudioProfiles = []
 
     const nodeById = new Map(nodes.map((node) => [node.id, node]))
     const edgeRegistry = new Set<string>()
@@ -1408,6 +1503,14 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
         }
 
         trafficSegmentLines.push(trafficLine)
+        trafficAudioProfiles.push({
+          line: trafficLine,
+          baseOpacity: style.opacity,
+          baseWeight: style.weight,
+          congestion: segment.congestionIndex,
+          phase: (segment.centroid.lat * 0.06) + (segment.centroid.lng * 0.03),
+          roadClass: segment.roadClass,
+        })
       })
     }
 
@@ -1474,7 +1577,6 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
         },
       )
       globalEventDots.push(eventDot)
-      renderedCategories.add(category)
       globalEventDotProfiles.push({
         dot: eventDot,
         baseRadius,
@@ -1497,43 +1599,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       alertRingProfiles.push({ ring, baseRadius: 10, phase: (node.lat * 0.05) + (node.lng * 0.03) })
     }
 
-    GLOBAL_EVENT_CATEGORIES.forEach((category) => {
-      if (renderedCategories.has(category)) return
-
-      const palette = GLOBAL_EVENT_DOT_COLORS[category]
-      const anchor = CATEGORY_BEACON_POINTS[category]
-      const beaconDot = L.circleMarker(anchor, {
-        radius: 1.9,
-        color: palette.stroke,
-        fillColor: palette.fill,
-        fillOpacity: 0.86,
-        opacity: 0.92,
-        weight: 1,
-        className: 'surveillance-global-event-dot',
-      }).addTo(globalEventLayer)
-
-      beaconDot.bindTooltip(
-        `<strong>${palette.label} Beacon</strong><br/>`
-        + `<span>Category visibility maintained</span><br/>`
-        + `<span>No high-confidence live incidents in current feed.</span>`,
-        {
-          direction: 'top',
-          opacity: 0.92,
-          sticky: true,
-        },
-      )
-
-      globalEventDots.push(beaconDot)
-      globalEventDotProfiles.push({
-        dot: beaconDot,
-        baseRadius: 1.9,
-        severityFactor: 0.9,
-        phase: Math.random() * Math.PI * 2,
-        category,
-      })
-    })
-
-    applyGlobalEventDotSizing()
+    applyGlobalEventDotSizing(audioReactiveBands.pulse, audioReactiveBands.transient, audioReactiveBands.flux)
 
     if (!hasInitialBounds) {
       map.fitBounds(WORLD_BOUNDS, { padding: [8, 8], animate: true, duration: 0.6 })
@@ -1556,9 +1622,10 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
 
   const setAltitude = (altitude: number) => {
     forceFullSize()
-    const maxOperationalZoom = Math.max(config.maxZoom, 18)
-    const zoom = Math.round(config.minZoom + ((100 - altitude) / 100) * (maxOperationalZoom - config.minZoom))
-    map.setZoom(Math.max(config.minZoom, Math.min(maxOperationalZoom, zoom)))
+    const minOperationalZoom = minViewportZoom
+    const maxOperationalZoom = Math.max(minOperationalZoom, Math.max(config.maxZoom, 18))
+    const zoom = Math.round(minOperationalZoom + ((100 - altitude) / 100) * (maxOperationalZoom - minOperationalZoom))
+    map.setZoom(Math.max(minOperationalZoom, Math.min(maxOperationalZoom, zoom)))
   }
 
   return {
@@ -1574,18 +1641,46 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       audioReactiveLevel = clamp01(level)
       if (bands) {
         audioReactiveBands = {
-          bass: clamp01(bands.bass),
-          mid: clamp01(bands.mid),
-          treble: clamp01(bands.treble),
-          pulse: clamp01(bands.pulse),
-          beat: clamp01(bands.beat),
+          subBass: clamp01(bands.subBass ?? 0),
+          bass: clamp01(bands.bass ?? 0),
+          lowMid: clamp01(bands.lowMid ?? 0),
+          mid: clamp01(bands.mid ?? 0),
+          presence: clamp01(bands.presence ?? 0),
+          treble: clamp01(bands.treble ?? 0),
+          brilliance: clamp01(bands.brilliance ?? 0),
+          flux: clamp01(bands.flux ?? 0),
+          transient: clamp01(bands.transient ?? 0),
+          centroid: clamp01(bands.centroid ?? 0),
+          pulse: clamp01(bands.pulse ?? 0),
+          beat: clamp01(bands.beat ?? 0),
         }
       } else if (!enabled) {
-        audioReactiveBands = { bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 }
+        audioReactiveBands = {
+          subBass: 0,
+          bass: 0,
+          lowMid: 0,
+          mid: 0,
+          presence: 0,
+          treble: 0,
+          brilliance: 0,
+          flux: 0,
+          transient: 0,
+          centroid: 0,
+          pulse: 0,
+          beat: 0,
+        }
       }
     },
     setWireframesVisible: (visible: boolean) => {
       applyWireframeVisibility(visible)
+    },
+    getZoom: () => map.getZoom(),
+    getViewportSpan: () => {
+      const bounds = map.getBounds()
+      const latSpan = Math.max(0, bounds.getNorth() - bounds.getSouth())
+      const rawLngSpan = bounds.getEast() - bounds.getWest()
+      const lngSpan = rawLngSpan >= 0 ? rawLngSpan : rawLngSpan + 360
+      return { latSpan, lngSpan }
     },
     projectLatLng: (lat: number, lng: number) => {
       const point = map.latLngToContainerPoint([lat, wrapLongitude(lng)])
@@ -1611,7 +1706,7 @@ export function initMap(container: HTMLElement, config: VisualizationConfig): Ma
       globalEventDotProfiles.length = 0
       map.off('dragstart', markUserNavigation)
       map.off('zoomstart', markUserNavigation)
-      map.off('zoomend', applyGlobalEventDotSizing)
+      map.off('zoomend', onZoomEndUpdateDots)
       map.off('moveend', emitViewportChange)
       map.off('zoomend', emitViewportChange)
       resizeObserver.disconnect()

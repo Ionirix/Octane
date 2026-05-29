@@ -43,9 +43,16 @@ type SurveillanceMapProps = {
     enabled: boolean
     level: number
     bands: {
+      subBass: number
       bass: number
+      lowMid: number
       mid: number
+      presence: number
       treble: number
+      brilliance: number
+      flux: number
+      transient: number
+      centroid: number
       pulse: number
       beat: number
     }
@@ -78,9 +85,14 @@ type ProjectedTarget = TargetLock & {
 type ProjectedHealthNode = ActiveHealthNode & {
   x: number
   y: number
+  energy: number
 }
 
 const TARGET_ANGLES = [-31, 0, 22, 47]
+const TARGET_EDGE_GUTTER_PX = 72
+const MIN_TARGET_LOCK_ZOOM = 2.6
+const MAX_TARGET_LOCK_LAT_SPAN = 112
+const MAX_TARGET_LOCK_LNG_SPAN = 220
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
@@ -120,6 +132,23 @@ function hasRealEvidence(alert: VisualizationAlert): boolean {
   return Array.isArray(alert.realWorldEvidence) && alert.realWorldEvidence.length > 0
 }
 
+function hasTrustedEvidenceSource(alert: VisualizationAlert): boolean {
+  if (!Array.isArray(alert.realWorldEvidence) || alert.realWorldEvidence.length === 0) return false
+  return alert.realWorldEvidence.some((evidence) => {
+    const source = String(evidence.source ?? '').toLowerCase()
+    if (!source) return false
+    return !(
+      source.includes('synthetic')
+      || source.includes('simulated')
+      || source.includes('simulation')
+      || source.includes('mock')
+      || source.includes('test')
+      || source.includes('demo')
+      || source.includes('fallback')
+    )
+  })
+}
+
 function maxRealEvidenceQuality(alert: VisualizationAlert): number {
   if (!Array.isArray(alert.realWorldEvidence) || alert.realWorldEvidence.length === 0) return 0
   return alert.realWorldEvidence.reduce((max, evidence) => Math.max(max, evidence.quality ?? 0.5), 0)
@@ -140,6 +169,7 @@ function isSyntheticOnlyAlert(alert: VisualizationAlert): boolean {
 
 function hasTrustedRealLocation(alert: VisualizationAlert): boolean {
   if (!hasRealEvidence(alert)) return false
+  if (!hasTrustedEvidenceSource(alert)) return false
   const quality = maxRealEvidenceQuality(alert)
   if (quality < 0.55) return false
 
@@ -399,22 +429,40 @@ export function SurveillanceMap({
 
       const width = container.clientWidth
       const height = container.clientHeight
+      const zoom = controller.getZoom()
+      const viewportSpan = controller.getViewportSpan()
+      const targetLocksVisible = zoom > MIN_TARGET_LOCK_ZOOM
+        && viewportSpan.latSpan <= MAX_TARGET_LOCK_LAT_SPAN
+        && viewportSpan.lngSpan <= MAX_TARGET_LOCK_LNG_SPAN
+      const transient = clamp01(audioReactive?.bands?.transient ?? 0)
+      const flux = clamp01(audioReactive?.bands?.flux ?? 0)
+      const presence = clamp01(audioReactive?.bands?.presence ?? 0)
+      const brilliance = clamp01(audioReactive?.bands?.brilliance ?? 0)
       const audioEnergy = clamp01(
         audioReactive?.enabled
-          ? ((audioReactive.level * 0.55) + ((audioReactive.bands?.pulse ?? 0) * 0.45))
+          ? ((audioReactive.level * 0.38) + ((audioReactive.bands?.pulse ?? 0) * 0.24) + ((audioReactive.bands?.beat ?? 0) * 0.18) + (transient * 0.12) + (flux * 0.08))
           : 0.12,
       )
 
-      const nextTargets = selectedTargets
+      const nextTargets = (targetLocksVisible ? selectedTargets : [])
         .map((target) => {
           const point = controller.projectLatLng(target.lat, target.lng)
           if (!point) return null
 
-          const x = Math.max(72, Math.min(width - 72, point.x))
-          const y = Math.max(72, Math.min(height - 72, point.y))
-          const wobble = audioReactive?.enabled ? Math.sin((timestamp + (x * 0.7) + (y * 0.35)) / 240) : 0
-          const audioTwistDeg = wobble * (3 + (audioEnergy * 8))
-          const audioScale = 1 + (audioEnergy * 0.24) + (wobble * 0.05)
+          if (
+            point.x < TARGET_EDGE_GUTTER_PX
+            || point.x > (width - TARGET_EDGE_GUTTER_PX)
+            || point.y < TARGET_EDGE_GUTTER_PX
+            || point.y > (height - TARGET_EDGE_GUTTER_PX)
+          ) {
+            return null
+          }
+
+          const x = point.x
+          const y = point.y
+          const wobble = audioReactive?.enabled ? Math.sin((timestamp + (x * 0.7) + (y * 0.35) + (flux * 240)) / (220 - (presence * 70))) : 0
+          const audioTwistDeg = wobble * (3 + (audioEnergy * 9.5) + (transient * 4.2))
+          const audioScale = 1 + (audioEnergy * 0.2) + (transient * 0.1) + (flux * 0.06) + (wobble * 0.05)
           return {
             ...target,
             x,
@@ -426,12 +474,15 @@ export function SurveillanceMap({
         .filter((target): target is ProjectedTarget => target !== null)
 
       const nextHealthNodes = healthNodes
-        .map((node) => {
+        .map((node, index) => {
           const point = controller.projectLatLng(node.lat, node.lng)
           if (!point) return null
+          const localPhase = (timestamp * 0.0038) + (index * 0.81) + (node.lat * 0.011)
+          const phaseWave = 0.5 + (Math.sin(localPhase) * 0.5)
+          const energy = clamp01((audioEnergy * 0.52) + (presence * 0.18) + (brilliance * 0.16) + (phaseWave * 0.14))
           const x = Math.max(20, Math.min(width - 20, point.x))
           const y = Math.max(20, Math.min(height - 20, point.y))
-          return { ...node, x, y }
+          return { ...node, x, y, energy }
         })
         .filter((node): node is ProjectedHealthNode => node !== null)
 
@@ -507,15 +558,32 @@ export function SurveillanceMap({
         className="surveillance-targeting-overlay"
         style={{
           ['--target-audio-energy' as string]: String(
-            clamp01((audioReactive?.enabled ? ((audioReactive.level * 0.5) + ((audioReactive.bands?.pulse ?? 0) * 0.5)) : 0.2)),
+            clamp01((audioReactive?.enabled
+              ? ((audioReactive.level * 0.32)
+                + ((audioReactive.bands?.pulse ?? 0) * 0.22)
+                + ((audioReactive.bands?.beat ?? 0) * 0.18)
+                + ((audioReactive.bands?.transient ?? 0) * 0.18)
+                + ((audioReactive.bands?.flux ?? 0) * 0.1))
+              : 0.2)),
           ),
+          ['--target-audio-transient' as string]: String(clamp01(audioReactive?.bands?.transient ?? 0)),
+          ['--target-audio-flux' as string]: String(clamp01(audioReactive?.bands?.flux ?? 0)),
         }}
       >
         <div className="surveillance-targeting-banner">
           TARGETING LAYER ACTIVE • {projectedTargets.length} REAL INCIDENT TARGETS • AUDIO REACTIVITY ON LIVE TARGETS ONLY
         </div>
         {projectedHealthNodes.map((node) => (
-          <div key={node.id} className={`surveillance-health-node surveillance-health-node--${node.tier}`} style={{ left: `${node.x}px`, top: `${node.y}px` }}>
+          <div
+            key={node.id}
+            className={`surveillance-health-node surveillance-health-node--${node.tier}`}
+            style={{
+              left: `${node.x}px`,
+              top: `${node.y}px`,
+              transform: `translate(-50%, -50%) scale(${(1 + (node.energy * 0.3)).toFixed(3)})`,
+              opacity: (0.72 + (node.energy * 0.28)).toFixed(3),
+            }}
+          >
             <div className="surveillance-health-node__dot" />
             <div className="surveillance-health-node__pulse" />
             {node.tier === 'metropolis' ? <div className="surveillance-health-node__label">{node.name} HEAL</div> : null}
@@ -535,6 +603,7 @@ export function SurveillanceMap({
                 style={{
                   ['--target-color' as string]: target.color,
                   ['--target-angle' as string]: `${target.baseAngle + target.audioTwistDeg}deg`,
+                  ['--target-scale' as string]: target.audioScale.toFixed(3),
                 }}
               >
                 <div className="surveillance-target-reticle-inner" />

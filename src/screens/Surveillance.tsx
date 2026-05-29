@@ -12,14 +12,31 @@ import { MetricCard } from '@components/primitives/MetricCard'
 import { StatusBadge } from '@components/primitives/StatusBadge'
 
 type AudioBands = {
+  subBass: number
   bass: number
+  lowMid: number
   mid: number
+  presence: number
   treble: number
+  brilliance: number
+  flux: number
+  transient: number
+  centroid: number
   pulse: number
   beat: number
 }
 
-type AudioInputMode = 'auto' | 'system' | 'microphone'
+type AudioInputMode = 'auto' | 'system' | 'microphone' | 'file'
+
+type AudioRuntime = {
+  context?: AudioContext
+  analyser?: AnalyserNode
+  source?: MediaStreamAudioSourceNode | MediaElementAudioSourceNode
+  stream?: MediaStream
+  mediaElement?: HTMLAudioElement
+  mediaObjectUrl?: string
+  raf?: number
+}
 
 type SharedAudioFrame = {
   sourceId: string
@@ -32,6 +49,20 @@ type SharedAudioFrame = {
 const AUDIO_SHARE_CHANNEL = 'octane-audio-reactive-v1'
 const REMOTE_AUDIO_TIMEOUT_MS = 2_500
 const TRAFFIC_REFRESH_MS = 45_000
+const EMPTY_AUDIO_BANDS: AudioBands = {
+  subBass: 0,
+  bass: 0,
+  lowMid: 0,
+  mid: 0,
+  presence: 0,
+  treble: 0,
+  brilliance: 0,
+  flux: 0,
+  transient: 0,
+  centroid: 0,
+  pulse: 0,
+  beat: 0,
+}
 
 type GlobalEventCategory = 'traffic' | 'weather' | 'wildfire' | 'police' | 'service'
 
@@ -102,6 +133,33 @@ type ActiveHealthNode = HealthNodeLocation & {
   activeSince: number
 }
 
+type HealthNodesApiResponse = {
+  success?: boolean
+  data?: {
+    capabilityMode?: string
+    activeNodes?: ActiveHealthNode[]
+    playbooks?: Array<{ id: string; title: string }>
+    recentOperations?: Array<{
+      id: string
+      status: string
+      nodeName: string
+      playbookTitle: string
+      createdAt: number
+      completedAt?: number
+    }>
+  }
+}
+
+type HealthPlaybook = { id: string; title: string }
+type HealthOperation = {
+  id: string
+  status: string
+  nodeName: string
+  playbookTitle: string
+  createdAt: number
+  completedAt?: number
+}
+
 const FALLBACK_NODES: VisualizationNode[] = [
   { id: 'edge-na', name: 'EDGE NA', country: 'United States', region: 'North America', lat: 39.8, lng: -98.6, status: 'NOMINAL', latencyMs: 36, loadPercent: 48, requestsPerMin: 22400, connections: ['edge-eu', 'edge-apac'] },
   { id: 'edge-eu', name: 'EDGE EU', country: 'Germany', region: 'Europe', lat: 51.2, lng: 10.4, status: 'NOMINAL', latencyMs: 54, loadPercent: 42, requestsPerMin: 19700, connections: ['edge-na', 'edge-apac'] },
@@ -120,12 +178,34 @@ const HEALTH_NODE_LOCATIONS: HealthNodeLocation[] = [
   { id: 'hn-town-bergen', name: 'Bergen', country: 'Norway', tier: 'town', lat: 60.3913, lng: 5.3221, repairRadiusKm: 260 },
   { id: 'hn-town-curitiba', name: 'Curitiba', country: 'Brazil', tier: 'town', lat: -25.429, lng: -49.2671, repairRadiusKm: 300 },
   { id: 'hn-town-port-louis', name: 'Port Louis', country: 'Mauritius', tier: 'town', lat: -20.1609, lng: 57.5012, repairRadiusKm: 180 },
+  { id: 'hn-town-faro', name: 'Faro', country: 'Portugal', tier: 'town', lat: 37.0194, lng: -7.9322, repairRadiusKm: 210 },
+  { id: 'hn-town-hobart', name: 'Hobart', country: 'Australia', tier: 'town', lat: -42.8821, lng: 147.3272, repairRadiusKm: 260 },
+  { id: 'hn-town-ushuaia', name: 'Ushuaia', country: 'Argentina', tier: 'town', lat: -54.8019, lng: -68.303, repairRadiusKm: 240 },
+  { id: 'hn-town-galway', name: 'Galway', country: 'Ireland', tier: 'town', lat: 53.2707, lng: -9.0568, repairRadiusKm: 220 },
+  { id: 'hn-town-queenstown', name: 'Queenstown', country: 'New Zealand', tier: 'town', lat: -45.0312, lng: 168.6626, repairRadiusKm: 250 },
+  { id: 'hn-town-nuuk', name: 'Nuuk', country: 'Greenland', tier: 'town', lat: 64.1814, lng: -51.6941, repairRadiusKm: 280 },
+  { id: 'hn-town-tromso', name: 'Tromso', country: 'Norway', tier: 'town', lat: 69.6492, lng: 18.9553, repairRadiusKm: 300 },
+  { id: 'hn-town-victoria-falls', name: 'Victoria Falls', country: 'Zimbabwe', tier: 'town', lat: -17.9243, lng: 25.8572, repairRadiusKm: 210 },
+  { id: 'hn-town-san-miguel', name: 'San Miguel de Allende', country: 'Mexico', tier: 'town', lat: 20.9144, lng: -100.7436, repairRadiusKm: 230 },
+  { id: 'hn-town-banff', name: 'Banff', country: 'Canada', tier: 'town', lat: 51.1784, lng: -115.5708, repairRadiusKm: 240 },
   { id: 'hn-city-anchorage', name: 'Anchorage', country: 'United States', tier: 'city', lat: 61.2181, lng: -149.9003, repairRadiusKm: 520 },
   { id: 'hn-city-toronto', name: 'Toronto', country: 'Canada', tier: 'city', lat: 43.6532, lng: -79.3832, repairRadiusKm: 680 },
   { id: 'hn-city-madrid', name: 'Madrid', country: 'Spain', tier: 'city', lat: 40.4168, lng: -3.7038, repairRadiusKm: 710 },
   { id: 'hn-city-nairobi', name: 'Nairobi', country: 'Kenya', tier: 'city', lat: -1.2921, lng: 36.8219, repairRadiusKm: 640 },
   { id: 'hn-city-lima', name: 'Lima', country: 'Peru', tier: 'city', lat: -12.0464, lng: -77.0428, repairRadiusKm: 690 },
   { id: 'hn-city-auckland', name: 'Auckland', country: 'New Zealand', tier: 'city', lat: -36.8485, lng: 174.7633, repairRadiusKm: 670 },
+  { id: 'hn-city-vancouver', name: 'Vancouver', country: 'Canada', tier: 'city', lat: 49.2827, lng: -123.1207, repairRadiusKm: 700 },
+  { id: 'hn-city-casablanca', name: 'Casablanca', country: 'Morocco', tier: 'city', lat: 33.5731, lng: -7.5898, repairRadiusKm: 660 },
+  { id: 'hn-city-santiago', name: 'Santiago', country: 'Chile', tier: 'city', lat: -33.4489, lng: -70.6693, repairRadiusKm: 710 },
+  { id: 'hn-city-helsinki', name: 'Helsinki', country: 'Finland', tier: 'city', lat: 60.1699, lng: 24.9384, repairRadiusKm: 630 },
+  { id: 'hn-city-kuala-lumpur', name: 'Kuala Lumpur', country: 'Malaysia', tier: 'city', lat: 3.139, lng: 101.6869, repairRadiusKm: 740 },
+  { id: 'hn-city-johannesburg', name: 'Johannesburg', country: 'South Africa', tier: 'city', lat: -26.2041, lng: 28.0473, repairRadiusKm: 760 },
+  { id: 'hn-city-istanbul', name: 'Istanbul', country: 'Turkey', tier: 'city', lat: 41.0082, lng: 28.9784, repairRadiusKm: 780 },
+  { id: 'hn-city-osaka', name: 'Osaka', country: 'Japan', tier: 'city', lat: 34.6937, lng: 135.5023, repairRadiusKm: 720 },
+  { id: 'hn-city-bogota', name: 'Bogota', country: 'Colombia', tier: 'city', lat: 4.711, lng: -74.0721, repairRadiusKm: 700 },
+  { id: 'hn-city-rome', name: 'Rome', country: 'Italy', tier: 'city', lat: 41.9028, lng: 12.4964, repairRadiusKm: 670 },
+  { id: 'hn-city-taipei', name: 'Taipei', country: 'Taiwan', tier: 'city', lat: 25.033, lng: 121.5654, repairRadiusKm: 690 },
+  { id: 'hn-city-doha', name: 'Doha', country: 'Qatar', tier: 'city', lat: 25.2854, lng: 51.531, repairRadiusKm: 650 },
   { id: 'hn-metro-new-york', name: 'New York', country: 'United States', tier: 'metropolis', lat: 40.7128, lng: -74.006, repairRadiusKm: 1200 },
   { id: 'hn-metro-los-angeles', name: 'Los Angeles', country: 'United States', tier: 'metropolis', lat: 34.0522, lng: -118.2437, repairRadiusKm: 1180 },
   { id: 'hn-metro-mexico-city', name: 'Mexico City', country: 'Mexico', tier: 'metropolis', lat: 19.4326, lng: -99.1332, repairRadiusKm: 1050 },
@@ -142,6 +222,30 @@ const HEALTH_NODE_LOCATIONS: HealthNodeLocation[] = [
   { id: 'hn-metro-shanghai', name: 'Shanghai', country: 'China', tier: 'metropolis', lat: 31.2304, lng: 121.4737, repairRadiusKm: 1270 },
   { id: 'hn-metro-jakarta', name: 'Jakarta', country: 'Indonesia', tier: 'metropolis', lat: -6.2088, lng: 106.8456, repairRadiusKm: 1110 },
   { id: 'hn-metro-sydney', name: 'Sydney', country: 'Australia', tier: 'metropolis', lat: -33.8688, lng: 151.2093, repairRadiusKm: 1190 },
+  { id: 'hn-metro-san-francisco', name: 'San Francisco', country: 'United States', tier: 'metropolis', lat: 37.7749, lng: -122.4194, repairRadiusKm: 1130 },
+  { id: 'hn-metro-chicago', name: 'Chicago', country: 'United States', tier: 'metropolis', lat: 41.8781, lng: -87.6298, repairRadiusKm: 1170 },
+  { id: 'hn-metro-atlanta', name: 'Atlanta', country: 'United States', tier: 'metropolis', lat: 33.749, lng: -84.388, repairRadiusKm: 1090 },
+  { id: 'hn-metro-buenos-aires', name: 'Buenos Aires', country: 'Argentina', tier: 'metropolis', lat: -34.6037, lng: -58.3816, repairRadiusKm: 1180 },
+  { id: 'hn-metro-rio-de-janeiro', name: 'Rio de Janeiro', country: 'Brazil', tier: 'metropolis', lat: -22.9068, lng: -43.1729, repairRadiusKm: 1160 },
+  { id: 'hn-metro-amsterdam', name: 'Amsterdam', country: 'Netherlands', tier: 'metropolis', lat: 52.3676, lng: 4.9041, repairRadiusKm: 1080 },
+  { id: 'hn-metro-berlin', name: 'Berlin', country: 'Germany', tier: 'metropolis', lat: 52.52, lng: 13.405, repairRadiusKm: 1100 },
+  { id: 'hn-metro-milan', name: 'Milan', country: 'Italy', tier: 'metropolis', lat: 45.4642, lng: 9.19, repairRadiusKm: 1070 },
+  { id: 'hn-metro-istanbul-metro', name: 'Istanbul Metro', country: 'Turkey', tier: 'metropolis', lat: 41.0151, lng: 28.9795, repairRadiusKm: 1120 },
+  { id: 'hn-metro-dubai', name: 'Dubai', country: 'United Arab Emirates', tier: 'metropolis', lat: 25.2048, lng: 55.2708, repairRadiusKm: 1150 },
+  { id: 'hn-metro-riyadh', name: 'Riyadh', country: 'Saudi Arabia', tier: 'metropolis', lat: 24.7136, lng: 46.6753, repairRadiusKm: 1110 },
+  { id: 'hn-metro-tehran', name: 'Tehran', country: 'Iran', tier: 'metropolis', lat: 35.6892, lng: 51.389, repairRadiusKm: 1140 },
+  { id: 'hn-metro-karachi', name: 'Karachi', country: 'Pakistan', tier: 'metropolis', lat: 24.8607, lng: 67.0011, repairRadiusKm: 1210 },
+  { id: 'hn-metro-dhaka', name: 'Dhaka', country: 'Bangladesh', tier: 'metropolis', lat: 23.8103, lng: 90.4125, repairRadiusKm: 1200 },
+  { id: 'hn-metro-manila', name: 'Manila', country: 'Philippines', tier: 'metropolis', lat: 14.5995, lng: 120.9842, repairRadiusKm: 1170 },
+  { id: 'hn-metro-ho-chi-minh-city', name: 'Ho Chi Minh City', country: 'Vietnam', tier: 'metropolis', lat: 10.8231, lng: 106.6297, repairRadiusKm: 1160 },
+  { id: 'hn-metro-hong-kong', name: 'Hong Kong', country: 'China', tier: 'metropolis', lat: 22.3193, lng: 114.1694, repairRadiusKm: 1090 },
+  { id: 'hn-metro-beijing', name: 'Beijing', country: 'China', tier: 'metropolis', lat: 39.9042, lng: 116.4074, repairRadiusKm: 1290 },
+  { id: 'hn-metro-singapore', name: 'Singapore', country: 'Singapore', tier: 'metropolis', lat: 1.3521, lng: 103.8198, repairRadiusKm: 1080 },
+  { id: 'hn-metro-melbourne', name: 'Melbourne', country: 'Australia', tier: 'metropolis', lat: -37.8136, lng: 144.9631, repairRadiusKm: 1180 },
+  { id: 'hn-metro-perth', name: 'Perth', country: 'Australia', tier: 'metropolis', lat: -31.9505, lng: 115.8605, repairRadiusKm: 1140 },
+  { id: 'hn-metro-auckland-metro', name: 'Auckland Metro', country: 'New Zealand', tier: 'metropolis', lat: -36.8509, lng: 174.7645, repairRadiusKm: 1110 },
+  { id: 'hn-metro-johannesburg-metro', name: 'Johannesburg Metro', country: 'South Africa', tier: 'metropolis', lat: -26.2041, lng: 28.0473, repairRadiusKm: 1120 },
+  { id: 'hn-metro-nairobi-metro', name: 'Nairobi Metro', country: 'Kenya', tier: 'metropolis', lat: -1.2864, lng: 36.8172, repairRadiusKm: 1040 },
 ]
 
 function normalizeAlertCategory(rawType: string): GlobalEventCategory {
@@ -163,6 +267,28 @@ function mapStatus(status: string): VisualizationNode['status'] {
 function formatAgo(timestamp: number, now: number): string {
   const minutes = Math.max(1, Math.round((now - timestamp) / 60_000))
   return minutes === 1 ? '1 min ago' : `${minutes} mins ago`
+}
+
+function isSyntheticLikeSource(source: string | undefined): boolean {
+  const value = (source ?? '').toLowerCase()
+  if (!value) return true
+  return (
+    value.includes('synthetic')
+    || value.includes('simulated')
+    || value.includes('simulation')
+    || value.includes('mock')
+    || value.includes('test')
+    || value.includes('demo')
+    || value.includes('fallback')
+  )
+}
+
+function hasTrustedRealEvidence(alert: VisualizationAlert): boolean {
+  if (!Array.isArray(alert.realWorldEvidence) || alert.realWorldEvidence.length === 0) return false
+  return alert.realWorldEvidence.some((evidence) => {
+    if (isSyntheticLikeSource(evidence.source)) return false
+    return (evidence.quality ?? 0.5) >= 0.5
+  })
 }
 
 function estimateTrafficBounds(center: { lat: number; lng: number }, altitude: number): string {
@@ -250,7 +376,9 @@ function congestionTone(congestionIndex: number): 'clear' | 'moderate' | 'heavy'
 }
 
 function toTrafficAlerts(incidents: TrafficIncidentPayload[]): VisualizationAlert[] {
-  return incidents.map((incident) => ({
+  return incidents
+    .filter((incident) => !isSyntheticLikeSource(incident.source))
+    .map((incident) => ({
     id: incident.id,
     type: incident.type,
     severity: incident.severity,
@@ -263,7 +391,7 @@ function toTrafficAlerts(incidents: TrafficIncidentPayload[]): VisualizationAler
     realWorldEvidence: [
       { source: incident.source, signal: 'roadClass', value: incident.roadClass, quality: incident.stale ? 0.45 : 0.9 },
     ],
-  }))
+    }))
 }
 
 function mergeFeedTimeline(
@@ -399,17 +527,28 @@ export default function Surveillance() {
   const [audioStatus, setAudioStatus] = useState('AUDIO OFF')
   const [audioInputMode, setAudioInputMode] = useState<AudioInputMode>('auto')
   const [audioLevel, setAudioLevel] = useState(0)
-  const [audioBands, setAudioBands] = useState<AudioBands>({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
+  const [audioBands, setAudioBands] = useState<AudioBands>(EMPTY_AUDIO_BANDS)
   const [fusionAutomationState, setFusionAutomationState] = useState('nominal')
+  const [backendHealthNodes, setBackendHealthNodes] = useState<ActiveHealthNode[] | null>(null)
+  const [healthNodeCapabilityMode, setHealthNodeCapabilityMode] = useState('fallback-local')
+  const [healthNodePlaybookCount, setHealthNodePlaybookCount] = useState(0)
+  const [healthNodePlaybooks, setHealthNodePlaybooks] = useState<HealthPlaybook[]>([])
+  const [healthNodeOperations, setHealthNodeOperations] = useState<HealthOperation[]>([])
+  const [healthActionBusy, setHealthActionBusy] = useState(false)
+  const [healthActionError, setHealthActionError] = useState<string | null>(null)
 
   const activeAlertIndexRef = useRef<Map<string, SurveillanceAlertFeed>>(new Map())
   const feedViewportRef = useRef<string | null>(null)
-  const audioBandsRef = useRef<AudioBands>({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
-  const audioRef = useRef<{ context?: AudioContext; analyser?: AnalyserNode; source?: MediaStreamAudioSourceNode; stream?: MediaStream; raf?: number }>({})
+  const audioBandsRef = useRef<AudioBands>(EMPTY_AUDIO_BANDS)
+  const audioRef = useRef<AudioRuntime>({})
   const audioShareRef = useRef<BroadcastChannel | null>(null)
   const lastRemoteAudioAtRef = useRef(0)
   const audioSourceIdRef = useRef(`octane-${Math.random().toString(36).slice(2)}`)
   const audioStatusRef = useRef('AUDIO OFF')
+  const previousSpectrumRef = useRef<Float32Array | null>(null)
+  const previousRmsRef = useRef(0)
+  const beatEnvelopeRef = useRef(0)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const transportRef = useRef<{ stop: () => void } | null>(null)
 
   const nodesRaw = useSurveillanceIntelStore((state) => state.nodes)
@@ -550,7 +689,9 @@ export default function Surveillance() {
   }, [trafficIncidentEvents, upstreamEvents])
   const mapEvents = activeEvents.filter((event) => {
     if (typeof event.lat !== 'number' || typeof event.lng !== 'number') return false
-    return !(Math.abs(event.lat) < 0.01 && Math.abs(event.lng) < 0.01)
+    if (Math.abs(event.lat) < 0.01 && Math.abs(event.lng) < 0.01) return false
+    if (event.resolved) return false
+    return hasTrustedRealEvidence(event)
   })
 
   const visibleNodes = layerVisibility.nodes ? nodes : []
@@ -593,6 +734,23 @@ export default function Surveillance() {
       setConnectionState({ status: 'degraded', message: 'Manual refresh failed', retries: 1, lastUpdateAt: Date.now() })
     }
   }, [setConnectionState, upsertBundle])
+
+  const refreshHealthNodeBackend = useCallback(async () => {
+    const response = await fetch(`/api/v6/self-healing/active-nodes?at=${Date.now()}`, {
+      headers: { accept: 'application/json' },
+    })
+    const payload = await response.json() as HealthNodesApiResponse
+    if (!payload.success) return
+
+    const activeNodes = payload.data?.activeNodes
+    if (Array.isArray(activeNodes) && activeNodes.length > 0) {
+      setBackendHealthNodes(activeNodes)
+      setHealthNodeCapabilityMode(payload.data?.capabilityMode ?? 'operator-assist')
+      setHealthNodePlaybookCount(payload.data?.playbooks?.length ?? 0)
+      setHealthNodePlaybooks(payload.data?.playbooks ?? [])
+      setHealthNodeOperations(payload.data?.recentOperations ?? [])
+    }
+  }, [])
 
   useEffect(() => {
     audioBandsRef.current = audioBands
@@ -725,7 +883,7 @@ export default function Surveillance() {
   useEffect(() => {
     if (!mapViewportBbox) return
     const activeFeed = activeEvents
-      .filter((event) => !event.resolved)
+      .filter((event) => !event.resolved && hasTrustedRealEvidence(event))
       .sort((left, right) => (right.timestamp ?? 0) - (left.timestamp ?? 0))
       .map<SurveillanceAlertFeed>((event) => ({
         id: event.id,
@@ -746,6 +904,121 @@ export default function Surveillance() {
 
     setFeedAlerts((current) => mergeFeedTimeline(current, previousActiveById, nextActiveById, Date.now()))
   }, [activeEvents, mapViewportBbox])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadHealthNodes = async () => {
+      try {
+        await refreshHealthNodeBackend()
+        if (cancelled) return
+      } catch {
+        if (cancelled) return
+        setBackendHealthNodes(null)
+        setHealthNodeCapabilityMode('fallback-local')
+        setHealthNodePlaybookCount(0)
+        setHealthNodePlaybooks([])
+        setHealthNodeOperations([])
+      }
+    }
+
+    void loadHealthNodes()
+    const timer = window.setInterval(() => {
+      void loadHealthNodes()
+    }, HEALTH_NODE_ROTATION_MS)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [refreshHealthNodeBackend])
+
+  const planHealthOperation = useCallback(async () => {
+    const currentActiveNodes = backendHealthNodes ?? getActiveHealthNodes(Date.now())
+    const firstNode = currentActiveNodes[0]
+    const firstPlaybook = healthNodePlaybooks[0]
+    if (!firstNode || !firstPlaybook) return
+    setHealthActionBusy(true)
+    setHealthActionError(null)
+    try {
+      const response = await fetch('/api/v6/self-healing/active-nodes/heal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({
+          nodeId: firstNode.id,
+          playbookId: firstPlaybook.id,
+          dryRun: false,
+          requestedBy: 'surveillance-ui',
+          reason: `Operator plan for ${firstNode.name} with ${firstPlaybook.title}`,
+        }),
+      })
+      if (!response.ok) throw new Error(`Plan failed (${response.status})`)
+      await refreshHealthNodeBackend()
+    } catch (actionError) {
+      setHealthActionError(actionError instanceof Error ? actionError.message : String(actionError))
+    } finally {
+      setHealthActionBusy(false)
+    }
+  }, [backendHealthNodes, healthNodePlaybooks, refreshHealthNodeBackend])
+
+  const approveLatestOperation = useCallback(async () => {
+    const target = healthNodeOperations.find((operation) => operation.status === 'awaiting_approval' || operation.status === 'planned')
+    if (!target) return
+    setHealthActionBusy(true)
+    setHealthActionError(null)
+    try {
+      const response = await fetch(`/api/v6/self-healing/active-nodes/operations/${encodeURIComponent(target.id)}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ approvedBy: 'surveillance-ui' }),
+      })
+      if (!response.ok) throw new Error(`Approve failed (${response.status}) · signed RBAC headers required`)
+      await refreshHealthNodeBackend()
+    } catch (actionError) {
+      setHealthActionError(actionError instanceof Error ? actionError.message : String(actionError))
+    } finally {
+      setHealthActionBusy(false)
+    }
+  }, [healthNodeOperations, refreshHealthNodeBackend])
+
+  const executeLatestOperation = useCallback(async () => {
+    const target = healthNodeOperations.find((operation) => operation.status === 'approved')
+    if (!target) return
+    setHealthActionBusy(true)
+    setHealthActionError(null)
+    try {
+      const response = await fetch(`/api/v6/self-healing/active-nodes/operations/${encodeURIComponent(target.id)}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ executedBy: 'surveillance-ui' }),
+      })
+      if (!response.ok) throw new Error(`Execute failed (${response.status}) · signed RBAC headers required`)
+      await refreshHealthNodeBackend()
+    } catch (actionError) {
+      setHealthActionError(actionError instanceof Error ? actionError.message : String(actionError))
+    } finally {
+      setHealthActionBusy(false)
+    }
+  }, [healthNodeOperations, refreshHealthNodeBackend])
+
+  const rollbackLatestOperation = useCallback(async () => {
+    const target = healthNodeOperations.find((operation) => operation.status === 'succeeded' || operation.status === 'failed')
+    if (!target) return
+    setHealthActionBusy(true)
+    setHealthActionError(null)
+    try {
+      const response = await fetch(`/api/v6/self-healing/active-nodes/operations/${encodeURIComponent(target.id)}/rollback`, {
+        method: 'POST',
+        headers: { accept: 'application/json' },
+      })
+      if (!response.ok) throw new Error(`Rollback failed (${response.status})`)
+      await refreshHealthNodeBackend()
+    } catch (actionError) {
+      setHealthActionError(actionError instanceof Error ? actionError.message : String(actionError))
+    } finally {
+      setHealthActionBusy(false)
+    }
+  }, [healthNodeOperations, refreshHealthNodeBackend])
 
   useEffect(() => {
     const weatherAlerts = activeEvents.filter((alert) => normalizeAlertCategory(alert.type) === 'weather').length
@@ -770,12 +1043,18 @@ export default function Surveillance() {
     const current = audioRef.current
     if (current.raf) window.cancelAnimationFrame(current.raf)
     current.stream?.getTracks().forEach((track) => track.stop())
+    current.mediaElement?.pause()
+    current.mediaElement?.removeAttribute('src')
+    if (current.mediaObjectUrl) URL.revokeObjectURL(current.mediaObjectUrl)
     current.source?.disconnect()
     current.analyser?.disconnect()
     current.context?.close().catch(() => undefined)
     audioRef.current = {}
+    previousSpectrumRef.current = null
+    previousRmsRef.current = 0
+    beatEnvelopeRef.current = 0
     setAudioLevel(0)
-    setAudioBands({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
+    setAudioBands(EMPTY_AUDIO_BANDS)
     setAudioStatus('AUDIO OFF')
     const channel = audioShareRef.current
     if (channel) {
@@ -784,14 +1063,153 @@ export default function Surveillance() {
         timestamp: Date.now(),
         status: 'AUDIO OFF',
         level: 0,
-        bands: { bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 },
+        bands: EMPTY_AUDIO_BANDS,
       }
       channel.postMessage(payload)
     }
   }, [])
 
+  const beginAudioSession = useCallback(async ({
+    stream,
+    mediaElement,
+    mediaObjectUrl,
+    modeLabel,
+  }: {
+    stream?: MediaStream
+    mediaElement?: HTMLAudioElement
+    mediaObjectUrl?: string
+    modeLabel: string
+  }) => {
+    const AudioCtor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AudioCtor) throw new Error('Web Audio unsupported')
+
+    const context = new AudioCtor()
+    const analyser = context.createAnalyser()
+    analyser.fftSize = 1024
+    analyser.smoothingTimeConstant = 0.82
+
+    let sourceNode: MediaStreamAudioSourceNode | MediaElementAudioSourceNode
+    if (stream) {
+      sourceNode = context.createMediaStreamSource(stream)
+      sourceNode.connect(analyser)
+    } else if (mediaElement) {
+      sourceNode = context.createMediaElementSource(mediaElement)
+      sourceNode.connect(analyser)
+      analyser.connect(context.destination)
+    } else {
+      throw new Error('No audio source provided')
+    }
+
+    const frequencies = new Uint8Array(analyser.frequencyBinCount)
+    const waveform = new Uint8Array(analyser.fftSize)
+
+    const hzToBin = (hz: number) => Math.max(0, Math.min(frequencies.length - 1, Math.floor((hz / (context.sampleRate / 2)) * frequencies.length)))
+    const readBand = (fromHz: number, toHz: number) => {
+      const start = hzToBin(fromHz)
+      const end = hzToBin(toHz)
+      if (end <= start) return 0
+      let sum = 0
+      for (let index = start; index <= end; index += 1) sum += frequencies[index]
+      return sum / (((end - start) + 1) * 255)
+    }
+
+    const loop = () => {
+      analyser.getByteFrequencyData(frequencies)
+      analyser.getByteTimeDomainData(waveform)
+
+      let rmsAccumulator = 0
+      for (let index = 0; index < waveform.length; index += 1) {
+        const centered = (waveform[index] - 128) / 128
+        rmsAccumulator += centered * centered
+      }
+      const rms = Math.sqrt(rmsAccumulator / waveform.length)
+      const normalizedRms = Math.max(0, Math.min(1, rms * 2.15))
+
+      const spectrumAvg = frequencies.reduce((sum, value) => sum + value, 0) / (frequencies.length * 255)
+      const subBass = readBand(20, 60)
+      const bass = readBand(60, 180)
+      const lowMid = readBand(180, 600)
+      const mid = readBand(600, 2000)
+      const presence = readBand(2000, 5000)
+      const treble = readBand(5000, 12000)
+      const brilliance = readBand(12000, 18000)
+
+      const previousSpectrum = previousSpectrumRef.current
+      let flux = 0
+      if (previousSpectrum) {
+        const len = Math.min(previousSpectrum.length, frequencies.length)
+        for (let index = 0; index < len; index += 1) {
+          const delta = (frequencies[index] / 255) - previousSpectrum[index]
+          if (delta > 0) flux += delta
+        }
+        flux = Math.max(0, Math.min(1, flux / Math.max(1, len * 0.22)))
+      }
+      previousSpectrumRef.current = Float32Array.from(frequencies, (value) => value / 255)
+
+      let weightedEnergy = 0
+      let weightedPosition = 0
+      for (let index = 0; index < frequencies.length; index += 1) {
+        const energy = frequencies[index] / 255
+        weightedEnergy += energy
+        weightedPosition += energy * index
+      }
+      const centroid = weightedEnergy > 0 ? Math.max(0, Math.min(1, (weightedPosition / weightedEnergy) / frequencies.length)) : 0
+      const transient = Math.max(0, Math.min(1, (flux * 0.72) + Math.max(0, normalizedRms - previousRmsRef.current) * 2.6))
+      previousRmsRef.current = normalizedRms
+
+      const pulse = Math.max(0, Math.min(1, (normalizedRms * 0.3) + (spectrumAvg * 0.2) + (subBass * 0.24) + (bass * 0.26)))
+      beatEnvelopeRef.current = Math.max(pulse, beatEnvelopeRef.current * 0.88)
+      const beat = Math.max(0, Math.min(1, ((pulse - (beatEnvelopeRef.current * 0.7)) * 3.2) + (transient * 0.36) + (subBass * 0.22)))
+
+      const level = Math.max(0, Math.min(1, (normalizedRms * 0.58) + (spectrumAvg * 0.42)))
+      const nextBands: AudioBands = {
+        subBass,
+        bass,
+        lowMid,
+        mid,
+        presence,
+        treble,
+        brilliance,
+        flux,
+        transient,
+        centroid,
+        pulse,
+        beat,
+      }
+
+      audioBandsRef.current = nextBands
+      setAudioLevel(level)
+      setAudioBands(nextBands)
+
+      const channel = audioShareRef.current
+      if (channel) {
+        const payload: SharedAudioFrame = {
+          sourceId: audioSourceIdRef.current,
+          timestamp: Date.now(),
+          status: `${modeLabel} LIVE`,
+          level,
+          bands: nextBands,
+        }
+        channel.postMessage(payload)
+      }
+
+      audioRef.current.raf = window.requestAnimationFrame(loop)
+    }
+
+    audioRef.current = {
+      context,
+      analyser,
+      source: sourceNode,
+      stream,
+      mediaElement,
+      mediaObjectUrl,
+    }
+    setAudioStatus(`${modeLabel} LIVE`)
+    loop()
+  }, [])
+
   const startAudioReactive = useCallback(async () => {
-    if (audioRef.current.stream) {
+    if (audioRef.current.stream || audioRef.current.mediaElement) {
       stopAudioReactive()
       return
     }
@@ -801,7 +1219,7 @@ export default function Surveillance() {
       let stream: MediaStream | null = null
       let modeLabel = 'MIC'
 
-      if (audioInputMode !== 'microphone' && navigator.mediaDevices?.getDisplayMedia) {
+      if (audioInputMode !== 'microphone' && audioInputMode !== 'file' && navigator.mediaDevices?.getDisplayMedia) {
         try {
           const displayMediaConstraints: MediaStreamConstraints & {
             preferCurrentTab?: boolean
@@ -832,66 +1250,42 @@ export default function Surveillance() {
         }
       }
 
-      if (!stream && audioInputMode !== 'system') {
+      if (!stream && audioInputMode !== 'system' && audioInputMode !== 'file') {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
         modeLabel = 'MIC'
       }
 
-      if (!stream) throw new Error('No audio stream available')
-
-      const AudioCtor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-      if (!AudioCtor) throw new Error('Web Audio unsupported')
-
-      const context = new AudioCtor()
-      const analyser = context.createAnalyser()
-      analyser.fftSize = 512
-      analyser.smoothingTimeConstant = 0.86
-      const source = context.createMediaStreamSource(stream)
-      source.connect(analyser)
-
-      const frequencies = new Uint8Array(analyser.frequencyBinCount)
-      const readBand = (start: number, end: number) => {
-        const s = Math.max(0, start)
-        const e = Math.min(frequencies.length, end)
-        if (e <= s) return 0
-        let sum = 0
-        for (let index = s; index < e; index += 1) sum += frequencies[index]
-        return sum / ((e - s) * 255)
-      }
-
-      const loop = () => {
-        analyser.getByteFrequencyData(frequencies)
-        const energy = frequencies.reduce((sum, value) => sum + value, 0) / (frequencies.length * 255)
-        const bass = readBand(0, Math.max(1, Math.floor(frequencies.length * 0.12)))
-        const mid = readBand(Math.floor(frequencies.length * 0.12), Math.max(2, Math.floor(frequencies.length * 0.5)))
-        const treble = readBand(Math.floor(frequencies.length * 0.5), frequencies.length)
-        const pulse = Math.max(0, Math.min(1, (energy * 0.55) + (bass * 0.45)))
-        const beat = Math.max(0, Math.min(1, (bass * 1.1) + (energy * 0.22) - (audioBandsRef.current.bass * 0.35)))
-        const nextBands = { bass, mid, treble, pulse, beat }
-        audioBandsRef.current = nextBands
-        setAudioLevel(Math.max(0, Math.min(1, energy)))
-        setAudioBands(nextBands)
-        const channel = audioShareRef.current
-        if (channel) {
-          const payload: SharedAudioFrame = {
-            sourceId: audioSourceIdRef.current,
-            timestamp: Date.now(),
-            status: `${modeLabel} LIVE`,
-            level: Math.max(0, Math.min(1, energy)),
-            bands: nextBands,
-          }
-          channel.postMessage(payload)
+      if (!stream) {
+        if (audioInputMode === 'file') {
+          fileInputRef.current?.click()
+          setAudioStatus('SELECT FILE...')
+          return
         }
-        audioRef.current.raf = window.requestAnimationFrame(loop)
+        throw new Error('No audio stream available')
       }
 
-      audioRef.current = { context, analyser, source, stream }
-      setAudioStatus(`${modeLabel} LIVE`)
-      loop()
+      await beginAudioSession({ stream, modeLabel })
     } catch {
       stopAudioReactive()
     }
-  }, [audioInputMode, stopAudioReactive])
+  }, [audioInputMode, beginAudioSession, stopAudioReactive])
+
+  const loadAudioFile = useCallback(async (file: File | null) => {
+    if (!file) return
+    stopAudioReactive()
+
+    try {
+      const objectUrl = URL.createObjectURL(file)
+      const mediaElement = new Audio(objectUrl)
+      mediaElement.crossOrigin = 'anonymous'
+      mediaElement.loop = true
+      mediaElement.volume = 1
+      await mediaElement.play()
+      await beginAudioSession({ mediaElement, mediaObjectUrl: objectUrl, modeLabel: 'FILE' })
+    } catch {
+      stopAudioReactive()
+    }
+  }, [beginAudioSession, stopAudioReactive])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') return
@@ -917,7 +1311,7 @@ export default function Surveillance() {
       if (status === 'AUDIO OFF' || status === 'REQUESTING...') return
       if (status.startsWith('REMOTE') && Date.now() - lastRemoteAudioAtRef.current > REMOTE_AUDIO_TIMEOUT_MS) {
         setAudioLevel(0)
-        setAudioBands({ bass: 0, mid: 0, treble: 0, pulse: 0, beat: 0 })
+        setAudioBands(EMPTY_AUDIO_BANDS)
         setAudioStatus('AUDIO OFF')
       }
     }, 1_000)
@@ -943,14 +1337,14 @@ export default function Surveillance() {
     return acc
   }, { traffic: 0, weather: 0, wildfire: 0, police: 0, service: 0 }), [activeEvents])
 
-  const activeHealthNodes = useMemo(() => getActiveHealthNodes(clockNow), [clockNow])
+  const activeHealthNodes = useMemo(() => backendHealthNodes ?? getActiveHealthNodes(clockNow), [backendHealthNodes, clockNow])
   const healthTierCounts = useMemo(() => activeHealthNodes.reduce<Record<HealthNodeTier, number>>((acc, node) => {
     acc[node.tier] += 1
     return acc
   }, { town: 0, city: 0, metropolis: 0 }), [activeHealthNodes])
 
   const stale = (Date.now() - (connection.lastSuccessAt ?? lastSync)) > STALE_THRESHOLD_MS
-  const mapSubtitle = `v7 global intel layered over the v6 sovereign surveillance surface · ${basemapMode} basemap · congestion ${congestionOnTrafficMapOnly ? 'active' : 'standby'} · traffic ${trafficProvider}${trafficStale ? ' · stale' : ''} · ${trafficSummary.dominantTone.toLowerCase()} · health nodes ${activeHealthNodes.length} active.`
+  const mapSubtitle = `v7 global intel layered over the v6 sovereign surveillance surface · ${basemapMode} basemap · congestion ${congestionOnTrafficMapOnly ? 'active' : 'standby'} · traffic ${trafficProvider}${trafficStale ? ' · stale' : ''} · ${trafficSummary.dominantTone.toLowerCase()} · health nodes ${activeHealthNodes.length} active · ${healthNodeCapabilityMode}.`
 
   return (
     <div className="oct-screen space-y-3 md:space-y-4">
@@ -983,6 +1377,18 @@ export default function Surveillance() {
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">
             <div className="flex flex-wrap items-center justify-end gap-2">
               <button type="button" onClick={() => void startAudioReactive()} className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">{audioStatus === 'AUDIO OFF' ? 'Enable Audio' : 'Disable Audio'}</button>
+              <button type="button" onClick={() => fileInputRef.current?.click()} className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Load Audio File</button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="audio/*"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null
+                  void loadAudioFile(file)
+                  event.currentTarget.value = ''
+                }}
+              />
               <select
                 value={audioInputMode}
                 onChange={(event) => setAudioInputMode(event.target.value as AudioInputMode)}
@@ -991,6 +1397,7 @@ export default function Surveillance() {
                 <option value="auto">Auto Source</option>
                 <option value="system">System / Tab</option>
                 <option value="microphone">Microphone</option>
+                <option value="file">File Playback</option>
               </select>
               <span className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Cross-tab share on</span>
               <button type="button" onClick={() => setWireframesVisible((current) => !current)} className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">{wireframesVisible ? 'Hide Wireframes' : 'Show Wireframes'}</button>
@@ -1105,9 +1512,9 @@ export default function Surveillance() {
       </Panel>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.8fr)_minmax(320px,0.7fr)]">
-        <Panel title="Live Intel Map" subtitle={mapSubtitle} className="h-full">
+        <Panel title="Live Intel Map" subtitle={mapSubtitle} className="h-full min-h-[620px]">
           <div className="flex h-full min-h-0 flex-col gap-3 pt-3">
-            <div className="mx-2 flex min-h-[560px] flex-1 pt-1 lg:min-h-[620px]">
+            <div className="mx-2 flex h-full min-h-0 pt-1">
               <SurveillanceMap
                 altitude={altitude}
                 focusedNodeId={focusedNode.id}
@@ -1153,7 +1560,14 @@ export default function Surveillance() {
           </Panel>
 
           <Panel title="Active Health Nodes" subtitle="self-healing internet repair network">
-            <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Cycle {Math.floor(clockNow / HEALTH_NODE_ROTATION_MS)} · rotates every {Math.round(HEALTH_NODE_ROTATION_MS / 1000)}s</div>
+            <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Cycle {Math.floor(clockNow / HEALTH_NODE_ROTATION_MS)} · rotates every {Math.round(HEALTH_NODE_ROTATION_MS / 1000)}s · mode {healthNodeCapabilityMode} · playbooks {healthNodePlaybookCount}</div>
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.12em]">
+              <button type="button" onClick={() => void planHealthOperation()} disabled={healthActionBusy || healthNodePlaybooks.length === 0} className="rounded border border-[var(--accent-2)] bg-[rgba(53,240,161,0.12)] px-2 py-1 text-[rgb(164,252,219)] disabled:opacity-50">Plan</button>
+              <button type="button" onClick={() => void approveLatestOperation()} disabled={healthActionBusy || !healthNodeOperations.some((operation) => operation.status === 'awaiting_approval' || operation.status === 'planned')} className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[var(--text)] disabled:opacity-50">Approve</button>
+              <button type="button" onClick={() => void executeLatestOperation()} disabled={healthActionBusy || !healthNodeOperations.some((operation) => operation.status === 'approved')} className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[var(--text)] disabled:opacity-50">Execute</button>
+              <button type="button" onClick={() => void rollbackLatestOperation()} disabled={healthActionBusy || !healthNodeOperations.some((operation) => operation.status === 'succeeded' || operation.status === 'failed')} className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[var(--text)] disabled:opacity-50">Rollback</button>
+              {healthActionError ? <span className="text-[var(--warn)]">{healthActionError}</span> : null}
+            </div>
             <div className="flex max-h-[280px] flex-col gap-2 overflow-y-auto pr-1">
               {activeHealthNodes.map((node) => (
                 <div key={node.id} className="rounded border border-[rgba(53,240,161,0.28)] bg-[rgba(4,26,20,0.6)] p-3">
@@ -1166,17 +1580,30 @@ export default function Surveillance() {
                 </div>
               ))}
             </div>
+            {healthNodeOperations.length > 0 ? (
+              <div className="mt-2 rounded border border-[var(--border)] bg-[var(--surface2)] p-2">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-[var(--muted)]">Recent operations</div>
+                <div className="mt-1 flex max-h-[120px] flex-col gap-1 overflow-y-auto pr-1">
+                  {healthNodeOperations.slice(0, 6).map((operation) => (
+                    <div key={operation.id} className="text-[10px] text-[var(--muted)]">
+                      <span className="text-[var(--text)]">{operation.status}</span> · {operation.nodeName} · {operation.playbookTitle}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </Panel>
 
-          <Panel title="Event Feed" subtitle={error ?? `${Math.round(intervalMs / 1000)}s cadence • ${connection.status}${mapViewportBbox ? ' • viewport active' : ' • awaiting viewport'}`}>
+          <Panel title="Event Feed" subtitle={error ?? `${Math.round(intervalMs / 1000)}s cadence • ${connection.status}${mapViewportBbox ? ' • viewport active' : ' • awaiting viewport'}`} className="h-[460px]">
             <div className="mb-2 flex items-center justify-end gap-2 text-[10px] uppercase tracking-[0.14em]"><button type="button" onClick={() => setAlertFeedClearedAt(Date.now())} className="rounded border border-[var(--border)] bg-[var(--surface2)] px-2 py-1 text-[var(--muted)] hover:text-[var(--text)]">Clear Feed</button></div>
-            {!mapViewportBbox && (
-              <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
-                <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--accent)] opacity-60">Pan or zoom the map</div>
-                <div className="text-[10px] text-[var(--muted)]">The feed will fill with activity for the area you navigate to</div>
-              </div>
-            )}
-            <div className="flex max-h-[355px] flex-col gap-2 overflow-y-auto pr-1">
+            <div className="h-[355px]">
+              {!mapViewportBbox && (
+                <div className="flex h-full flex-col items-center justify-center gap-2 py-8 text-center">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--accent)] opacity-60">Pan or zoom the map</div>
+                  <div className="text-[10px] text-[var(--muted)]">The feed will fill with activity for the area you navigate to</div>
+                </div>
+              )}
+              <div className={`flex h-full flex-col gap-2 overflow-y-auto pr-1 ${!mapViewportBbox ? 'hidden' : ''}`}>
               {closureFeed.slice(0, 14).map((alert) => (
                 <button key={alert.id} type="button" onClick={() => setFocusedNodeId(alert.serverId ?? focusedNode.id)} className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3 text-left transition-colors hover:border-[var(--accent)]">
                   <div className="flex items-start justify-between gap-3">
@@ -1194,6 +1621,7 @@ export default function Surveillance() {
                   </div>
                 </button>
               ))}
+              </div>
             </div>
           </Panel>
 

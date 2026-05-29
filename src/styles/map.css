@@ -378,8 +378,8 @@
   box-shadow:
     0 0 16px color-mix(in srgb, var(--target-color) 62%, transparent),
     inset 0 0 13px color-mix(in srgb, var(--target-color) 36%, transparent);
-  transform: rotate(var(--target-angle));
-  opacity: 0.86;
+  transform: rotate(var(--target-angle)) scale(var(--target-scale, 1));
+  opacity: calc(0.72 + (var(--target-audio-energy) * 0.24) + (var(--target-audio-transient, 0) * 0.12));
 }
 
 .surveillance-target-reticle-inner {
@@ -453,7 +453,7 @@
   top: -0.5px;
   height: 1px;
   background: linear-gradient(90deg, color-mix(in srgb, var(--target-color) 92%, white 8%), transparent);
-  opacity: 0.8;
+  opacity: calc(0.68 + (var(--target-audio-energy) * 0.24) + (var(--target-audio-flux, 0) * 0.08));
 }
 
 .surveillance-target-label {
@@ -582,52 +582,52 @@
 
 @keyframes surveillance-target-entry {
   0% {
-    transform: rotate(calc(var(--target-angle) - 24deg));
+    transform: rotate(calc(var(--target-angle) - 24deg)) scale(calc(var(--target-scale, 1) * 0.92));
   }
   55% {
-    transform: rotate(calc(var(--target-angle) + 8deg));
+    transform: rotate(calc(var(--target-angle) + 8deg)) scale(calc(var(--target-scale, 1) * 1.06));
   }
   100% {
-    transform: rotate(var(--target-angle));
+    transform: rotate(var(--target-angle)) scale(var(--target-scale, 1));
   }
 }
 
 @keyframes surveillance-target-live-rotate {
   from {
-    transform: rotate(var(--target-angle));
+    transform: rotate(var(--target-angle)) scale(var(--target-scale, 1));
   }
   to {
-    transform: rotate(calc(var(--target-angle) + 360deg));
+    transform: rotate(calc(var(--target-angle) + 360deg)) scale(var(--target-scale, 1));
   }
 }
 
 @keyframes surveillance-target-acquire-spin {
   0% {
-    transform: rotate(calc(var(--target-angle) - 20deg));
+    transform: rotate(calc(var(--target-angle) - 20deg)) scale(calc(var(--target-scale, 1) * 0.95));
   }
   45% {
-    transform: rotate(calc(var(--target-angle) + 5deg));
+    transform: rotate(calc(var(--target-angle) + 5deg)) scale(calc(var(--target-scale, 1) * 1.04));
   }
   100% {
-    transform: rotate(var(--target-angle));
+    transform: rotate(var(--target-angle)) scale(var(--target-scale, 1));
   }
 }
 
 @keyframes surveillance-target-dwell {
   0%, 100% {
-    transform: rotate(var(--target-angle));
+    transform: rotate(var(--target-angle)) scale(var(--target-scale, 1));
   }
   50% {
-    transform: rotate(calc(var(--target-angle) + 2deg));
+    transform: rotate(calc(var(--target-angle) + 2deg)) scale(calc(var(--target-scale, 1) * 1.03));
   }
 }
 
 @keyframes surveillance-target-exit {
   from {
-    transform: rotate(var(--target-angle));
+    transform: rotate(var(--target-angle)) scale(var(--target-scale, 1));
   }
   to {
-    transform: rotate(calc(var(--target-angle) + 28deg));
+    transform: rotate(calc(var(--target-angle) + 28deg)) scale(calc(var(--target-scale, 1) * 0.88));
   }
 }
 
@@ -638,13 +638,13 @@
 
 @keyframes surveillance-target-resolved-flash {
   0% {
-    transform: rotate(var(--target-angle));
+    transform: rotate(var(--target-angle)) scale(var(--target-scale, 1));
   }
   35% {
-    transform: rotate(calc(var(--target-angle) + 10deg));
+    transform: rotate(calc(var(--target-angle) + 10deg)) scale(calc(var(--target-scale, 1) * 1.08));
   }
   100% {
-    transform: rotate(var(--target-angle));
+    transform: rotate(var(--target-angle)) scale(var(--target-scale, 1));
   }
 }
 

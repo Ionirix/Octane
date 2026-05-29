@@ -470,6 +470,15 @@ export interface Env {
   ISSUE_DATE:           string;
   CLASSIFICATION:       string;
   HERE_TRAFFIC_API_KEY?: string;
+  SELF_HEALING_SIGNING_SECRET?: string;
+  SELF_HEALING_DNS_ENDPOINT?: string;
+  SELF_HEALING_DNS_TOKEN?: string;
+  SELF_HEALING_CDN_ENDPOINT?: string;
+  SELF_HEALING_CDN_TOKEN?: string;
+  SELF_HEALING_LB_ENDPOINT?: string;
+  SELF_HEALING_LB_TOKEN?: string;
+  SELF_HEALING_INCIDENT_ENDPOINT?: string;
+  SELF_HEALING_INCIDENT_TOKEN?: string;
 }
 
 export interface OctaneEnv {
