@@ -24,6 +24,8 @@ ORG                  = "Ionirix LLC"
 OPERATOR             = "Mirnes — Sovereign Architect"
 ISSUE_DATE           = "2026-05-23"
 CLASSIFICATION       = "Sovereign-Eyes Only"
+V7_INTEL_UPSTREAM_BASE_URL = "https://8b39333f.octane-v7.pages.dev"
+V7_INTEL_UPSTREAM_RETRIES = 1
 
 [[kv_namespaces]]
 binding     = "EXISTENCE_LATTICE_KV"

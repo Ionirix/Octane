@@ -350,7 +350,73 @@ export type IntelClientOptions = {
   headers?: Record<string, string>
 }
 
+type IntelBridgeMode = 'protected' | 'public'
+
+export type IntelBridgeRuntime = {
+  mode: IntelBridgeMode
+  baseUrl: string
+  fallbackBaseUrl: boolean
+  timeoutMs: number
+  retries: number
+}
+
 const DEFAULT_BASE_URL = 'https://8b39333f.octane-v7.pages.dev'
+const DEFAULT_MODE: IntelBridgeMode = 'protected'
+const DEFAULT_TIMEOUT_MS = 6_500
+const DEFAULT_RETRIES = 1
+
+function readEnvVar(key: string): string {
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {}
+  return (env[key] ?? '').trim()
+}
+
+function normalizeBaseUrl(value: string): string | null {
+  if (!value) return null
+  if (value.startsWith('/')) return value.replace(/\/$/, '') || '/'
+
+  try {
+    const parsed = new URL(value)
+    if (parsed.protocol !== 'https:') return null
+    return parsed.origin
+  } catch {
+    return null
+  }
+}
+
+function normalizeMode(value: string): IntelBridgeMode {
+  return value.toLowerCase() === 'public' ? 'public' : DEFAULT_MODE
+}
+
+function normalizePositiveInteger(value: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  const rounded = Math.round(parsed)
+  if (rounded < min) return min
+  if (rounded > max) return max
+  return rounded
+}
+
+export function getIntelBridgeRuntime(): IntelBridgeRuntime {
+  const mode = normalizeMode(readEnvVar('VITE_OCTANE_V7_INTEL_MODE'))
+  const configuredPublicBase = normalizeBaseUrl(readEnvVar('VITE_OCTANE_V7_INTEL_BASE_URL'))
+  const protectedBase = '/api'
+  const publicBase = configuredPublicBase ?? DEFAULT_BASE_URL
+
+  return {
+    mode,
+    baseUrl: mode === 'protected' ? protectedBase : publicBase,
+    fallbackBaseUrl: mode === 'public' && !configuredPublicBase,
+    timeoutMs: normalizePositiveInteger(readEnvVar('VITE_OCTANE_V7_INTEL_TIMEOUT_MS'), DEFAULT_TIMEOUT_MS, 2_000, 20_000),
+    retries: normalizePositiveInteger(readEnvVar('VITE_OCTANE_V7_INTEL_RETRIES'), DEFAULT_RETRIES, 0, 3),
+  }
+}
+
+function getPublicModeToken(): string | null {
+  const runtime = getIntelBridgeRuntime()
+  if (runtime.mode !== 'public') return null
+  const token = readEnvVar('VITE_OCTANE_V7_INTEL_TOKEN')
+  return token ? token : null
+}
 
 async function fetchJsonWithTimeout(url: string, timeoutMs: number, headers: Record<string, string>): Promise<unknown> {
   const controller = new AbortController()
@@ -408,36 +474,47 @@ async function fetchDomainIntelBundle(baseUrl: string, timeoutMs: number, header
 }
 
 export async function fetchGlobalIntelBundle(options: IntelClientOptions = {}): Promise<NormalizedIntelBundle> {
+  const runtime = getIntelBridgeRuntime()
   const requestedBaseUrl = options.baseUrl
-  const timeoutMs = options.timeoutMs ?? 6_500
+  const timeoutMs = options.timeoutMs ?? runtime.timeoutMs
+  const retries = runtime.retries
   const headers: Record<string, string> = {
     accept: 'application/json',
     ...options.headers,
   }
 
-  if (options.authToken) {
-    headers.authorization = `Bearer ${options.authToken}`
+  const effectiveAuthToken = options.authToken ?? getPublicModeToken()
+  if (effectiveAuthToken) {
+    headers.authorization = `Bearer ${effectiveAuthToken}`
   }
 
   const baseCandidates = requestedBaseUrl
     ? [requestedBaseUrl]
-    : ['/api', DEFAULT_BASE_URL]
+    : [runtime.baseUrl]
 
   let lastError: Error | null = null
 
   for (const baseUrl of baseCandidates) {
-    try {
-      const payload = await fetchJsonWithTimeout(`${baseUrl}/v7/intel/global`, timeoutMs, headers)
-      return normalizeIntelBundle(payload)
-    } catch (globalError) {
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
       try {
-        return await fetchDomainIntelBundle(baseUrl, timeoutMs, headers)
-      } catch (domainError) {
-        lastError = domainError instanceof Error
-          ? domainError
-          : globalError instanceof Error
-            ? globalError
-            : new Error(String(domainError))
+        const payload = await fetchJsonWithTimeout(`${baseUrl}/v7/intel/global`, timeoutMs, headers)
+        return normalizeIntelBundle(payload)
+      } catch (globalError) {
+        try {
+          return await fetchDomainIntelBundle(baseUrl, timeoutMs, headers)
+        } catch (domainError) {
+          lastError = domainError instanceof Error
+            ? domainError
+            : globalError instanceof Error
+              ? globalError
+              : new Error(String(domainError))
+        }
+      }
+
+      if (attempt < retries) {
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 250 * (attempt + 1))
+        })
       }
     }
   }

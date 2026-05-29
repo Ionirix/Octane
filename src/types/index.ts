@@ -469,6 +469,9 @@ export interface Env {
   OPERATOR:             string;
   ISSUE_DATE:           string;
   CLASSIFICATION:       string;
+  V7_INTEL_UPSTREAM_BASE_URL?: string;
+  V7_INTEL_UPSTREAM_TOKEN?: string;
+  V7_INTEL_UPSTREAM_RETRIES?: number;
   HERE_TRAFFIC_API_KEY?: string;
   SELF_HEALING_SIGNING_SECRET?: string;
   SELF_HEALING_DNS_ENDPOINT?: string;

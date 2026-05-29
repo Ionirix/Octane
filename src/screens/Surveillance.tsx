@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Radar, RefreshCcw, Server } from 'lucide-react'
 import { SurveillanceMap } from '@/components/surveillance/SurveillanceMap'
-import { createPollingIntelTransport, type IntelFocusMode } from '@/modules/surveillance/intel'
+import { createPollingIntelTransport, getIntelBridgeRuntime, type IntelFocusMode } from '@/modules/surveillance/intel'
 import { runFusionCycle } from '@/modules/fusion'
 import { useFusedEventStore } from '@/modules/fusion/event-store'
 import { emitTelemetryEvent, type TelemetrySample } from '@/modules/visualization/telemetry'
@@ -537,6 +537,7 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
 }
 
 export default function Surveillance() {
+  const intelRuntime = useMemo(() => getIntelBridgeRuntime(), [])
   const [altitude, setAltitude] = useState(78)
   const [clockNow, setClockNow] = useState(Date.now())
   const [focusedNodeId, setFocusedNodeId] = useState('edge-na')
@@ -756,7 +757,7 @@ export default function Surveillance() {
     setConnectionState({ status: 'reconnecting', message: 'Manual refresh in progress', retries: 0, lastUpdateAt: Date.now() })
     try {
       const { fetchGlobalIntelBundle } = await import('@/modules/surveillance/intel')
-      const bundle = await fetchGlobalIntelBundle({ timeoutMs: 6_500 })
+      const bundle = await fetchGlobalIntelBundle({ timeoutMs: intelRuntime.timeoutMs })
       upsertBundle(bundle)
       setError(null)
       setLoading(false)
@@ -765,7 +766,7 @@ export default function Surveillance() {
       setError(refreshError instanceof Error ? refreshError.message : String(refreshError))
       setConnectionState({ status: 'degraded', message: 'Manual refresh failed', retries: 1, lastUpdateAt: Date.now() })
     }
-  }, [setConnectionState, upsertBundle])
+  }, [intelRuntime.timeoutMs, setConnectionState, upsertBundle])
 
   const refreshHealthNodeBackend = useCallback(async () => {
     const response = await fetch(`/api/v6/self-healing/active-nodes?at=${Date.now()}`, {
@@ -800,7 +801,11 @@ export default function Surveillance() {
   useEffect(() => {
     loadCachedBundle()
     const transport = createPollingIntelTransport(
-      { intervalMs, timeoutMs: 6_500 },
+      {
+        intervalMs,
+        timeoutMs: intelRuntime.timeoutMs,
+        baseUrl: intelRuntime.baseUrl,
+      },
       {
         onMessage: (bundle) => {
           upsertBundle(bundle)
@@ -828,7 +833,7 @@ export default function Surveillance() {
       transport.stop()
       transportRef.current = null
     }
-  }, [intervalMs, loadCachedBundle, setConnectionState, upsertBundle])
+  }, [intelRuntime.baseUrl, intelRuntime.timeoutMs, intervalMs, loadCachedBundle, setConnectionState, upsertBundle])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1403,6 +1408,10 @@ export default function Surveillance() {
                 <span className={`rounded border px-2 py-1 ${stale ? 'border-[var(--warn)] text-[var(--warn)]' : 'border-[var(--border)] text-[var(--muted)]'}`}>{stale ? 'STALE DATA' : 'FRESH'}</span>
               </div>
               <span className="text-[var(--muted)]">Last sync {new Date(lastSync).toLocaleTimeString('en', { hour12: false })}</span>
+            </div>
+            <div className="mt-2 grid gap-1 text-[10px] uppercase tracking-[0.14em] text-[var(--muted)] md:grid-cols-2">
+              <span>Intel upstream {intelRuntime.baseUrl}{intelRuntime.fallbackBaseUrl ? ' (default)' : ' (configured)'}</span>
+              <span>Bridge mode {intelRuntime.mode} · retries {intelRuntime.retries} · timeout {Math.round(intelRuntime.timeoutMs / 1000)}s</span>
             </div>
           </div>
 

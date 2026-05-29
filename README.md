@@ -16,6 +16,45 @@
 
 ---
 
+## V7 INTEL BRIDGE HARDENING (V6 RUNTIME)
+
+Octane v6 now includes hardened v7 intel bridge behavior while keeping the v6 Worker runtime deployment path unchanged.
+
+- The Surveillance plane shows active intel upstream, bridge mode, connectivity status, timeout, and retry posture.
+- Client bridge modes:
+  - `protected` (default): calls local `/api/v7/intel/*` proxy route.
+  - `public`: calls external v7 upstream directly.
+- Token handling:
+  - Public mode can use optional `VITE_OCTANE_V7_INTEL_TOKEN` (browser-visible).
+  - Protected mode keeps token server-side via Worker binding `V7_INTEL_UPSTREAM_TOKEN`.
+
+### V6 Bridge Environment Variables
+
+Client (Vite):
+
+- `VITE_OCTANE_V7_INTEL_MODE` = `protected` | `public` (default `protected`)
+- `VITE_OCTANE_V7_INTEL_BASE_URL` (used in public mode; default `https://8b39333f.octane-v7.pages.dev`)
+- `VITE_OCTANE_V7_INTEL_TIMEOUT_MS` (default `6500`)
+- `VITE_OCTANE_V7_INTEL_RETRIES` (default `1`, max `3`)
+- `VITE_OCTANE_V7_INTEL_TOKEN` (optional, public mode only)
+
+Worker bindings:
+
+- `V7_INTEL_UPSTREAM_BASE_URL` (optional)
+- `V7_INTEL_UPSTREAM_RETRIES` (optional)
+- `V7_INTEL_UPSTREAM_TOKEN` (optional secret)
+
+### Deploy (unchanged for v6)
+
+```bash
+npm run build
+npm run deploy
+```
+
+The v6 route and runtime model at `octane.ionirix.com` remains unchanged.
+
+---
+
 ## TABLE OF CONTENTS
 
 | # | Section |
